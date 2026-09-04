@@ -156,6 +156,10 @@ code { background: var(--fond-doux); padding: 0.1rem 0.3rem; border-radius: 5px;
 .message-entete .auteur { font-weight: 600; color: var(--texte); }
 .message-texte { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 
+.message-entete .kind { padding: 0 0.3rem; border: 1px solid var(--trait); border-radius: 5px; }
+.message-entete .mention-verifie { color: var(--vert); }
+.message-entete .mention-doute { color: var(--rouge); font-weight: 600; }
+
 .message.controle { border-left-color: var(--gris); color: var(--texte-doux); font-size: 0.9rem; }
 .message.non-verifie { border-left-color: var(--rouge); }
 .message.non-verifie .mention { color: var(--rouge); font-weight: 600; }

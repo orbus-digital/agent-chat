@@ -73,7 +73,9 @@ export function demarrer(monde) {
     heure.textContent = v.heure;
     entete.append(heure);
 
-    if (v.kind && v.kind !== 'text') {
+    // Auteur, heure, kind et état vérifié sont tous les quatre affichés, pour
+    // chaque message : c'est ce que le lecteur doit pouvoir juger (AC-06).
+    if (v.kind) {
       const kind = doc.createElement('span');
       kind.className = 'kind';
       kind.textContent = v.kind;
@@ -81,7 +83,7 @@ export function demarrer(monde) {
     }
     if (v.mention) {
       const mention = doc.createElement('span');
-      mention.className = 'mention';
+      mention.className = `mention ${v.verifie ? 'mention-verifie' : 'mention-doute'}`;
       mention.textContent = v.mention;
       entete.append(mention);
     }

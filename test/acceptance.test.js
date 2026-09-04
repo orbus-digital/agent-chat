@@ -17,6 +17,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FakeNtfy } from './helpers/fake-ntfy.js';
 import { TAG_SIG } from '../lib/protocol.js';
+import { altererCorps } from './helpers/alterer.js';
 
 const execFileP = promisify(execFile);
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -468,7 +469,7 @@ describe('AC-09 — export chiffré et relecture hors ligne', () => {
 
     const archive = JSON.parse((await cli(['export', url])).stdout);
     const dernier = archive.messages.at(-1);
-    dernier.message = `${dernier.message.slice(0, -1)}${dernier.message.at(-1) === 'A' ? 'B' : 'A'}`;
+    dernier.message = altererCorps(dernier.message);
     const fichier = join(home, 'abime.json');
     writeFileSync(fichier, JSON.stringify(archive));
 

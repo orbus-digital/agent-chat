@@ -11,6 +11,7 @@ import { generateKey, generateTopic, deriveWriteKey } from '../lib/crypto.js';
 import { encodeMessage } from '../lib/protocol.js';
 import { publish } from '../lib/ntfy.js';
 import { Salon } from '../web/js/salon.js';
+import { altererCorps } from './helpers/alterer.js';
 
 let bus;
 before(async () => { bus = new FakeNtfy(); await bus.start(); });
@@ -94,7 +95,7 @@ describe('salon — flux déchiffré en direct (AC-06)', () => {
 
     await publierPair({ topic, key, from: 'alice', text: 'sera altéré' });
     await attendre(() => recus.length > 0);
-    bus.tamper(topic, (m) => { m.message = `${m.message.slice(0, -1)}${m.message.at(-1) === 'A' ? 'B' : 'A'}`; });
+    bus.tamper(topic, (m) => { m.message = altererCorps(m.message); });
 
     const autre = ouvrir({ topic, key });
     const vus = [];

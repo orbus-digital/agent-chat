@@ -101,7 +101,9 @@ export function vueMessage(m) {
     verifie: Boolean(m.verified),
     invalide: false,
     control,
-    mention: m.verified ? '' : 'non vérifié',
+    // L'état est toujours dit, jamais déduit d'une absence : « rien » se lit
+    // trop facilement comme « rien à signaler » (AC-06).
+    mention: m.verified ? 'vérifié' : 'non vérifié',
   };
 }
 

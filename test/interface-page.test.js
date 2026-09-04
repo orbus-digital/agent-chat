@@ -11,7 +11,10 @@
 
 import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FakeNtfy } from './helpers/fake-ntfy.js';
@@ -24,6 +27,7 @@ import { demarrer, busAutorise, BUS_AUTORISES } from '../web/js/app.js';
 import { versSvg } from '../web/js/qr.js';
 
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..');
+const execFileP = promisify(execFile);
 const HTML = readFileSync(join(RACINE, 'web', 'index.html'), 'utf8');
 const CSS = readFileSync(join(RACINE, 'web', 'css', 'style.css'), 'utf8');
 const UI = 'https://exemple.test/chat/';
@@ -399,6 +403,36 @@ describe('page — export et import (AC-09)', () => {
       'l\'import n\'a rien affiché',
     );
     assert.match(lecteur.doc.getElementById('avis-salon').textContent, /relus/);
+  });
+
+  test('l\'interface importe le fichier produit par le CLI, sans conversion (AC-09)', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    // L'URL porte le bus de test : le CLI est un vrai processus, il ne doit
+    // pas aller frapper le bus public.
+    const url = buildSessionUrl({ topic, key, server: bus.base, uiBase: UI });
+
+    // Le CLI, tel qu'un agent l'emploie : il rejoint, écrit, puis exporte.
+    const home = mkdtempSync(join(tmpdir(), 'agentchat-pont-'));
+    let archive;
+    try {
+      const env = { ...process.env, HOME: home, AGENTCHAT_UI_BASE: UI };
+      const cli = (args) => execFileP(process.execPath, [join(RACINE, 'bin', 'agentchat.js'), ...args], { env, timeout: 15000 });
+      await cli(['join', url, '--as', 'agent-cli']);
+      await cli(['send', url, 'écrit par le CLI', '--as', 'agent-cli']);
+      archive = (await cli(['export', url])).stdout;
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+
+    const { doc } = await monter(lienDe(topic, key), { lireFichier: () => archive });
+    await doc.getElementById('fichier-import').declencher('change');
+
+    assert.ok(
+      doc.getElementById('fil').children.some((li) => li.texteRendu.includes('écrit par le CLI')),
+      "l'interface ne relit pas l'export du CLI",
+    );
+    assert.match(doc.getElementById('avis-salon').textContent, /relus/);
   });
 
   test('un fichier qui n\'est pas un export est refusé avec un message', async () => {

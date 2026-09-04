@@ -120,6 +120,8 @@ describe('interface — mise en forme d\'un message', () => {
     assert.equal(v.verifie, true);
     assert.equal(v.control, false);
     assert.match(v.heure, HORAIRE);
+    assert.equal(v.mention, 'vérifié', "l'état vérifié doit être dit, pas déduit d'un silence");
+    assert.equal(v.kind, 'text', 'le kind fait partie de ce qui est affiché (AC-06)');
   });
 
   test('un message non vérifié le dit, et n\'est pas présenté comme authentique (AC-04)', () => {
