@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, statSync, readFileSync, writeFileSync, mkdirSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKey, generateTopic } from '../lib/crypto.js';
-import { encodeB64u } from '../lib/base64url.js';
+import { encodeB64u } from '../lib/bytes.js';
 import { saveSession, loadSession, sessionPath, sessionDir, listSessions, DEFAULT_TTL_H, MAX_TTL_H, normaliseTtl, isExpired } from '../lib/session.js';
 import { UsageError, DEFAULT_NTFY_BASE } from '../lib/url.js';
 

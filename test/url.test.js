@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKey, generateTopic } from '../lib/crypto.js';
-import { encodeB64u } from '../lib/base64url.js';
+import { encodeB64u } from '../lib/bytes.js';
 import { buildSessionUrl, parseSessionUrl, DEFAULT_UI_BASE, DEFAULT_NTFY_BASE, UsageError } from '../lib/url.js';
 
 const topic = generateTopic();
