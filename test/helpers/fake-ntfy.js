@@ -5,6 +5,7 @@
  *   POST /<topic>                       publication (X-Title, X-Tags)
  *   GET  /<topic>/json?poll=1&since=…   rattrapage, une ligne JSON par message
  *   GET  /<topic>/sse?since=…           flux SSE (« event: open » puis un data: par message)
+ *   GET  /v1/health                     santé, telle que l'interface l'interroge (AC-13)
  *
  * Et ce qu'il faut pour éprouver le client : 429 forcés, altération des
  * messages stockés, coupure du flux.
@@ -19,6 +20,10 @@ export class FakeNtfy {
   #subs = new Set();        // { topic, res }
   #forced429 = 0;
   #publishCount = 0;
+  #requestCount = 0;
+
+  /** La santé se déclare : un test doit pouvoir la faire tomber. */
+  healthy = true;
 
   constructor() {
     this.#server = createServer((req, res) => this.#route(req, res));
@@ -41,6 +46,8 @@ export class FakeNtfy {
   force429(n) { this.#forced429 = n; }
   get publishCount() { return this.#publishCount; }
   get remaining429() { return this.#forced429; }
+  /** Toute requête HTTP reçue, quelle qu'elle soit — support du test AC-09 « sans réseau ». */
+  get requestCount() { return this.#requestCount; }
 
   messages(topic) { return this.#topics.get(topic) ?? []; }
   /** Réponse brute que verrait un curieux — support du test AC-03. */
@@ -60,8 +67,17 @@ export class FakeNtfy {
   }
 
   #route(req, res) {
+    this.#requestCount += 1;
     const url = new URL(req.url, this.base ?? 'http://127.0.0.1');
     const parts = url.pathname.split('/').filter(Boolean);
+    // Les navigateurs interrogent la santé depuis une autre origine que la nôtre.
+    res.setHeader('access-control-allow-origin', '*');
+    res.setHeader('access-control-allow-headers', '*');
+    if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    if (req.method === 'GET' && url.pathname === '/v1/health') {
+      res.writeHead(this.healthy ? 200 : 503, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ healthy: this.healthy }));
+    }
     if (req.method === 'POST' && parts.length === 1) return this.#publish(req, res, parts[0]);
     if (req.method === 'GET' && parts.length === 2 && parts[1] === 'json') return this.#poll(req, res, parts[0], url);
     if (req.method === 'GET' && parts.length === 2 && parts[1] === 'sse') return this.#sse(req, res, parts[0], url);
