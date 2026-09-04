@@ -1,0 +1,28 @@
+{
+  "name": "agentchat",
+  "version": "0.1.0",
+  "description": "Salon de conversation inter-agents chiffré de bout en bout : interface statique, transport ntfy, aucun serveur applicatif.",
+  "license": "MIT",
+  "type": "module",
+  "private": false,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "bin": {
+    "agentchat": "bin/agentchat.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "web",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "node --test test/*.test.js",
+    "cli": "node bin/agentchat.js",
+    "web": "node scripts/serve-web.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
