@@ -1,95 +1,119 @@
-# Tâche : agent-chat-relay V1 — LOT 1 (noyau chiffré + CLI + transport ntfy)
+# Tâche : agent-chat-relay V1 — LOT 2 (interface, archive, TTL, migration, publication)
 
 Unité ADLC `agent-chat-relay-c20260904-1840` · spec `specs/agent-chat-relay/spec.md` **V1.1** ·
-**16 AC** au total (AC-01..AC-16).
-
-> **Écart relevé et tranché.** L'intitulé de l'unité de travail, rédigé sur la spec V1.0, mentionne
-> des « fonctions Netlify d'archive + /api/health ». La spec **V1.1** du même jour les exclut
-> explicitement (§8 « Pas de Netlify, pas de fonction serveur », R8 « Aucun serveur applicatif »,
-> D-04). La spec fait foi : **aucune fonction serveur n'est écrite**, l'archive est l'export local
-> chiffré (AC-09) et la santé se lit sur `GET {NTFY}/v1/health` (AC-13). Toute trace de Netlify a
-> été retirée du dépôt.
+16 AC au total · LOT 1 livré (PR #1, 8/16).
 
 ## Objectif du lot
 
-Livrer le **noyau** du relais : chiffrement E2E, signature, URL capacitaire, transport ntfy
-(publication avec repli sur 429, abonnement SSE + repli polling), anti-rejeu, fichier de session,
-et le CLI `agentchat` (`create`, `join`, `tail`, `send`).
+Les 8 demandes restantes : **AC-06, AC-09, AC-10, AC-12, AC-13, AC-14, AC-15, AC-16** → 16/16.
 
-8 demandes traitées : **AC-01, AC-02, AC-03, AC-04, AC-05, AC-07, AC-08, AC-11** → compteur 8/16.
+## Décision d'architecture qui commande tout le lot
 
-Reporté au LOT 2 : AC-06 (UI Pages + observateur), AC-09 (export / replay / import),
-AC-10 (TTL en écriture UI+CLI), AC-12 (couverture et intégration complètes), AC-13 (Pages + CSP),
-AC-14 (README de démonstration), AC-15 (`--private-meta`), AC-16 (`control:migrate`).
+L'interface doit chiffrer et vérifier **exactement** comme le CLI. Deux implémentations
+(`node:crypto` côté CLI, WebCrypto côté navigateur) auraient divergé un jour, et la divergence
+d'un protocole de chiffrement est silencieuse : elle ne casse pas un test, elle rend un message
+illisible ou, pire, faussement authentifié.
 
-## Contrat de transport — vérifié empiriquement avant d'écrire du code
+→ **Un seul noyau isomorphe**, écrit en **WebCrypto pur** (disponible nativement dans Node 22 comme
+dans tout navigateur), sans `Buffer`, sans `node:*`. Il vit dans `web/js/core/` — le dossier que
+GitHub Pages publie — et `lib/` n'en est plus qu'une façade Node, plus `session.js` qui, lui, est
+légitimement propre à Node (système de fichiers).
 
-Sondes directes sur `ntfy.sh`, 2026-09-04 (rejouées et confirmées en fin de lot) :
-
-| Vérification | Résultat |
-|---|---|
-| `X-Title` / `X-Tags` conservés par ntfy.sh | oui (`title`, `tags[]` dans le JSON) |
-| En-tête custom `X-Sig` conservé | **non — silencieusement supprimé** |
-| Tags multiples avec `:` et base64url | oui (`["text","ts:...","sig:AbC-_dEf"]`) |
-| `?since=<id>` | **exclusif** — ne renvoie pas le message d'ancrage (satisfait AC-07) |
-| `/sse` | `event: open` puis une ligne `data:` par message |
-| `GET /v1/health` | `200` |
-| `expires - time` | 43 200 s = cache 12 h |
-
-→ Conséquence de conception : la signature et le `ts` client voyagent dans les **tags**, le corps
-reste exactement `base64url(nonce||ct||tag)` comme l'exige la spec §2.1/§3. Voir
-`docs/adr/ADR-001-metadonnees-dans-les-tags-ntfy.md`.
+Conséquence : `seal`/`open`/`sign` deviennent asynchrones (WebCrypto l'est). Le CLI l'était déjà.
 
 ## Plan
 
-- [x] Socle npm : `package.json` (Node 22, ESM, zéro dépendance), `.gitignore`, portail de couverture
-- [x] `lib/base64url.js` — encodage/décodage sans remplissage (tests d'abord)
-- [x] `lib/crypto.js` — `generateKey`, `generateTopic`, `deriveWriteKey` (HKDF), `seal`/`open` AES-256-GCM + AAD
-- [x] `lib/sign.js` — HMAC-SHA-256(Kw) + comparaison à temps constant
-- [x] `lib/url.js` — construction/lecture de l'URL capacitaire (`#t=`, `k=`, `ro=1`, `s=`)
-- [x] `lib/protocol.js` — enveloppe de message, `ReplayGuard` (nonce vu, `ts` décroissant > 60 s)
-- [x] `lib/ntfy.js` — `publish` (limite 64 Ko, repli exponentiel sur 429), `poll`, `subscribe` (SSE → polling)
-- [x] `lib/session.js` — `~/.agentchat/<topic>.json` en 600, dossier en 700
-- [x] `test/helpers/fake-ntfy.js` — serveur ntfy de test local (POST, /json, /sse, 429 forcés, altération)
-- [x] `bin/agentchat.js` — `create`, `join`, `tail`, `send` ; codes 0/2/3/4/5
-- [x] Tests d'acceptation bout en bout : deux CLI conversent (AC-02), rien en clair sur le bus (AC-03)
-- [x] `docs/adr/ADR-001` — métadonnées de message dans les tags ntfy
-- [x] `npm test` vert + couverture ≥ 80 % sur `lib/crypto`, `lib/sign`, `lib/ntfy`
-- [x] Purge des références à Netlify (spec V1.1)
-- [x] Commits conventionnels, PR vers `dev`, compteur d'unité à 8/16
+- [ ] **Noyau isomorphe** — `web/js/core/{bytes,crypto,sign,url,protocol,ntfy}.js` en WebCrypto pur ;
+      `lib/*.js` réduits à des réexports ; tests existants adaptés (async) et **toujours verts**
+- [ ] **AC-15 `--private-meta`** — `X-Title: ac`, tag `m` ; `from`/`kind` dans le clair chiffré ;
+      l'AAD se construit sur ce qui est **réellement publié**, donc reste vérifiable des deux côtés
+- [ ] **AC-09 export / replay / import** — `agentchat export` (JSON chiffré), `agentchat replay`
+      **sans réseau**, et le même fichier importable dans l'interface
+- [ ] **AC-10 TTL** — refus d'écrire passé le TTL, côté CLI (code 3) **et** côté interface ;
+      lecture et export restent possibles
+- [ ] **AC-16 `control:migrate`** — `agentchat migrate` publie l'ordre, `tail` bascule sur le nouveau
+      topic sans perte (5 messages avant, 5 après)
+- [ ] **AC-06 + AC-13 interface** — `web/index.html` + modules : accueil (créer → URL + QR), salon
+      (fil déchiffré en direct, roster, état de connexion, export/import, sélecteur de serveur),
+      mode observateur `ro=1` sans zone d'écriture, « clé absente » sans fragment `k` ;
+      CSP stricte `default-src 'self'; connect-src <NTFY_BASE_URL>`, 390 px et écran large,
+      thème clair/sombre, indicateur `GET {NTFY}/v1/health`
+- [ ] **Publication Pages** — workflow GitHub Actions publiant `web/` (le mode « branche » de Pages
+      ne sait servir que `/` ou `/docs`, jamais `/web` : l'artefact est donc explicite)
+- [ ] **AC-12** — tests d'intégration complets, couverture ≥ 80 % maintenue sur le noyau
+- [ ] **AC-14 README** — mode d'emploi vérifiable en moins de 10 minutes, Node 22 + navigateur
+- [ ] Commits conventionnels, PR vers `dev`, compteur d'unité à 16/16
 
 ## Risques
 
-- **ntfy.sh public applique une limite de débit** → les tests d'acceptation utilisent le serveur local ;
-  seules les sondes manuelles touchent ntfy.sh.
-- **Repli 429** : ne jamais déclarer un message envoyé s'il ne l'est pas (R5). Le test d'acceptation
-  mesure le repli réel (≈ 15 s) : son délai de garde doit rester plus large, faute de quoi c'est le
-  test qui tue le processus et le code de retour observé n'est plus celui du CLI.
-- **Dépôt public (R6)** : aucun secret, aucun nom de client, aucune référence à un projet ODS dans le
-  code, les tests, les jeux d'essai.
+- **Refactorisation d'un noyau vert** : chaque module est déplacé puis les tests sont relancés
+  immédiatement ; aucune fonctionnalité n'est ajoutée pendant le déplacement.
+- **CSP stricte** : `connect-src` doit contenir le serveur ntfy choisi. Un sélecteur de serveur
+  libre et une CSP stricte sont contradictoires ; l'interface documente et applique une liste
+  restreinte (méta CSP + vérification à l'exécution).
+- **Pas de dépendance** : le QR code est dessiné par un encodeur maison minimal, ou remplacé par un
+  lien copiable si l'encodeur devient plus coûteux que le service rendu.
+- **Dépôt public (R6)** : aucun secret, aucun nom de client, aucun projet interne dans le code,
+  les tests, les jeux d'essai.
 
 ## Retour arrière
 
-Le lot est isolé sur `feat/agent-chat-relay-lot1` ; `dev` n'est touchée que par la PR.
-`git checkout dev && git branch -D feat/agent-chat-relay-lot1` annule tout.
+`git checkout dev && git branch -D feat/agent-chat-relay-lot2`. Le lot est empilé sur
+`feat/agent-chat-relay-lot1` (PR #1 encore ouverte) ; sa PR vise `dev`.
 
 ## Vérification
 
 ```bash
-npm test          # unitaires + acceptation + portail de couverture
-node bin/agentchat.js create --ttl 2
+npm test                 # unitaires + acceptation + portail de couverture
+npx serve web            # interface : accueil, salon, observateur, import d'export
 ```
 
 ## Notes de revue
+(à compléter en fin de lot)
 
-- 127 tests, tous verts. Couverture : `lib/crypto` 98,3 % · `lib/sign` 100 % · `lib/ntfy` 99,4 %
-  (seuil AC-12 : 80 %).
-- Deux tests d'acceptation étaient rouges à la reprise du lot ; **aucun des deux ne révélait un
-  défaut du produit** :
-  - AC-03 cherchait chaque mot de la phrase d'essai dans le corps chiffré, y compris `a` et `la` —
-    une suite de un à trois caractères apparaît par hasard dans n'importe quel base64. Le test
-    cherche désormais la phrase entière et les mots d'au moins quatre caractères ; la preuve de
-    non-fuite reste entière, l'aléa disparaît.
-  - AC-11 attendait le code 4 après un repli de 1+2+4+8 s, mais le délai de garde du harnais valait
-    exactement 15 s : le test tuait le CLI juste avant sa dernière tentative et observait 1. Délai
-    porté à 40 s pour ce cas, et un processus tué lève désormais au lieu de se déguiser en code 1.
+## Notes de revue — LOT 2
+
+**301 tests verts**, couverture au-dessus du seuil sur les sept modules gardés
+(`lib/crypto` 98,6 % · `lib/sign` 100 % · `lib/ntfy` 99,5 % · `web/js/etat` 100 % ·
+`web/js/salon` 98,4 % · `web/js/app` 89,6 % · `web/js/qr` 100 %).
+
+### La décision qui a commandé le lot
+
+Le noyau est devenu **isomorphe**, en WebCrypto pur. C'était l'alternative au fait d'écrire deux
+implémentations du protocole, une par runtime — et une divergence entre elles n'aurait cassé aucun
+test : elle aurait rendu un message illisible, ou faussement authentifié. `web/lib` est un lien
+symbolique vers `lib/`, donc GitHub Pages sert exactement les fichiers que la suite éprouve, sans
+copie et sans étape de construction. `test/isomorphisme.test.js` garde l'invariant, parce que rien
+d'autre ne signalerait une régression qui réintroduit `Buffer` : le CLI resterait vert, et
+l'interface tomberait en production.
+
+### Ce qui a été appris en route
+
+- **GitHub Pages ne sait pas servir `/web`** en mode « branche » : seulement la racine ou `/docs`.
+  D'où un workflow qui construit l'artefact et matérialise le lien symbolique au dernier moment.
+- **`ntfy` accuse réception avant de servir le message dans son cache** : un `join` immédiatement
+  après un `create` ne trouve pas toujours le roster. Sans conséquence — les rosters sont cumulatifs
+  et le suivant complète la liste — mais le taire aurait donné à croire la session vide, donc le CLI
+  le dit maintenant.
+- **Une CSP stricte et un sélecteur de serveur libre se contredisent.** L'interface applique une
+  liste restreinte (`connect-src`) et explique le refus au lieu de laisser une requête échouer sans
+  raison visible.
+- **Le double de DOM est construit depuis les identifiants réels de `index.html`**, attribut
+  `hidden` compris. Un identifiant renommé dans la page sans l'être dans le code fait donc échouer
+  les tests, alors qu'un navigateur ne l'aurait signalé qu'à l'exécution.
+
+### Le code QR (§2.3)
+
+Écrit sur place, sans dépendance : la page ne charge aucune ressource externe. Un QR faux étant
+pire que pas de QR, il est éprouvé par trois garde-fous indépendants — les informations de format
+et de version comparées aux tables publiées de la norme, les mots de correction vérifiés par leurs
+**syndromes** (calcul que l'encodeur ne fait jamais), et une relecture module par module qui doit
+rendre le texte de départ. Un test retourne délibérément un module pour prouver que la vérification
+a du mordant.
+
+### Ce qui reste à un humain
+
+`npm test` couvre les règles, pas le rendu. Restent à voir dans un vrai navigateur : l'absence
+d'erreur en console, l'aspect à 390 px et sur grand écran, et le thème sombre. Le README donne la
+marche à suivre en quatre étapes (`npm run web`), et la démonstration CLI a été rejouée telle quelle
+contre `ntfy.sh` : deux agents ont conversé, le message est arrivé `verified: true`.

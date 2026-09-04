@@ -21,6 +21,7 @@ import { buildSessionUrl } from '../lib/url.js';
 import { encodeB64u } from '../lib/bytes.js';
 import { Salon } from '../web/js/salon.js';
 import { demarrer, busAutorise, BUS_AUTORISES } from '../web/js/app.js';
+import { versSvg } from '../web/js/qr.js';
 
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..');
 const HTML = readFileSync(join(RACINE, 'web', 'index.html'), 'utf8');
@@ -333,6 +334,23 @@ describe('page — accueil et création (AC-01, §2.3)', () => {
     assert.equal(bus.publishCount, avant, 'une requête est partie vers un bus non autorisé');
     assert.match(doc.getElementById('aide-serveur').textContent, /politique de sécurité/i);
     assert.equal(doc.getElementById('creer-resultat').hidden, true);
+  });
+
+  test('un code QR du lien participant est affiché, et il encode bien ce lien', async () => {
+    const { doc } = await monter('', { location: fausseAdresse(`${bus.base}/chat/`) });
+    doc.getElementById('creer-nom').value = 'alice';
+    doc.getElementById('creer-serveur').value = bus.base;
+    await doc.getElementById('creer-form').declencher('submit');
+
+    const image = doc.getElementById('qr');
+    assert.equal(image.hidden, false);
+    assert.match(image.src, /^data:image\/svg\+xml;charset=utf-8,/);
+    assert.ok(image.width > 0 && image.width === image.height);
+
+    // Le QR est régénéré ici depuis le lien affiché : s'il encodait autre
+    // chose, l'image ne correspondrait pas.
+    const attendu = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(versSvg(doc.getElementById('lien-participant').value))}`;
+    assert.equal(image.src, attendu);
   });
 
   test('les liens se copient dans le presse-papier', async () => {

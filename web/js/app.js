@@ -9,6 +9,7 @@ import { generateKey, generateTopic } from '../lib/crypto.js';
 import { buildSessionUrl, DEFAULT_NTFY_BASE } from '../lib/url.js';
 import { lireFragment, peutEcrire, etatTtl } from './etat.js';
 import { Salon } from './salon.js';
+import { versSvg } from './qr.js';
 
 /** La politique de sécurité de la page ne laisse joindre que ces bus. */
 export const BUS_AUTORISES = ['https://ntfy.sh'];
@@ -160,6 +161,7 @@ export function demarrer(monde) {
 
       $('lien-participant').value = lien;
       $('lien-observateur').value = `${lien}&ro=1`;
+      afficherQr(lien);
       $('creer-resultat').hidden = false;
       app.lienCree = lien;
     });
@@ -171,6 +173,27 @@ export function demarrer(monde) {
       adresse.href = app.lienCree;
       adresse.reload?.();
     });
+  }
+
+  /**
+   * Le code QR est posé en `data:` — la politique de sécurité l'autorise pour
+   * les images et rien d'autre. Aucune ressource n'est chargée, aucun balisage
+   * n'est injecté dans la page.
+   */
+  function afficherQr(lien) {
+    const image = $('qr');
+    try {
+      const svg = versSvg(lien);
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      const cote = Number(svg.match(/width="(\d+)"/)?.[1] ?? 0);
+      image.width = cote;
+      image.height = cote;
+      image.hidden = false;
+    } catch (err) {
+      // Un lien trop long pour un QR n'empêche pas de partager le lien lui-même.
+      image.hidden = true;
+      $('aide-serveur').textContent = `Code QR impossible : ${err.message}`;
+    }
   }
 
   // ------------------------------------------------------------- salon

@@ -162,6 +162,11 @@ code { background: var(--fond-doux); padding: 0.1rem 0.3rem; border-radius: 5px;
 .message.invalide { border-left-color: var(--rouge); border-style: dashed; }
 .message.invalide .mention { color: var(--rouge); }
 
+.qr { margin: var(--espace) 0; text-align: center; }
+.qr img { max-width: 100%; height: auto; border-radius: var(--rayon); background: #ffffff; }
+.qr img[hidden] { display: none; }
+.qr figcaption { margin-top: 0.25rem; }
+
 .zone-ecriture { position: sticky; bottom: 0; }
 .zone-ecriture[hidden] { display: none; }
 

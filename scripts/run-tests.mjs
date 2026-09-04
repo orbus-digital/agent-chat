@@ -31,6 +31,7 @@ const SEUILS = {
   'web/js/etat.js': 80,
   'web/js/salon.js': 80,
   'web/js/app.js': 80,
+  'web/js/qr.js': 80,
 };
 
 rmSync(join(RACINE, 'coverage'), { recursive: true, force: true });
