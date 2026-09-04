@@ -14,12 +14,14 @@
   "files": [
     "bin",
     "lib",
+    "web",
     "README.md"
   ],
   "scripts": {
     "test": "node scripts/run-tests.mjs",
     "test:unit": "node --test test/*.test.js",
-    "cli": "node bin/agentchat.js"
+    "cli": "node bin/agentchat.js",
+    "web": "node scripts/serve-web.mjs"
   },
   "dependencies": {},
   "devDependencies": {}

@@ -1,0 +1,190 @@
+/*
+ * Feuille de style unique de l'interface. Aucune ressource externe, aucune
+ * police téléchargée : la politique de sécurité de la page l'interdit, et
+ * l'interface doit s'afficher même sur un réseau qui ne laisse passer que
+ * le bus ntfy.
+ *
+ * Le dimensionnement est fluide : aucune largeur fixe, de sorte qu'un
+ * téléphone de 390 px n'ait rien à faire défiler latéralement.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --fond: #fbfbfd;
+  --fond-carte: #ffffff;
+  --fond-doux: #f1f2f6;
+  --texte: #16181d;
+  --texte-doux: #5b6270;
+  --trait: #dfe2e9;
+  --accent: #2f5fd0;
+  --accent-texte: #ffffff;
+  --vert: #1f8a4c;
+  --rouge: #c0392b;
+  --gris: #8b919d;
+
+  --rayon: 10px;
+  --espace: 0.75rem;
+  --largeur-lisible: 46rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fond: #14161a;
+    --fond-carte: #1c1f25;
+    --fond-doux: #242830;
+    --texte: #eceef2;
+    --texte-doux: #a3aab8;
+    --trait: #333844;
+    --accent: #6e9bff;
+    --accent-texte: #0d1117;
+    --vert: #43c07a;
+    --rouge: #ff7a6b;
+    --gris: #7d838f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 var(--espace) 3rem;
+  background: var(--fond);
+  color: var(--texte);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main, .barre, .pied { margin: 0 auto; max-width: var(--largeur-lisible); }
+
+/* ------------------------------------------------------------- en-tête */
+
+.barre {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--espace);
+  padding: var(--espace) 0;
+  border-bottom: 1px solid var(--trait);
+}
+
+.barre h1 { margin: 0; font-size: 1.1rem; letter-spacing: 0.02em; }
+
+.sante { display: flex; align-items: center; gap: 0.4rem; margin: 0; font-size: 0.85rem; color: var(--texte-doux); }
+.sante .pastille { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--gris); }
+.sante[data-etat="vert"] .pastille { background: var(--vert); }
+.sante[data-etat="rouge"] .pastille { background: var(--rouge); }
+.sante[data-etat="rouge"] { color: var(--rouge); }
+
+/* --------------------------------------------------------------- blocs */
+
+.vue { padding: var(--espace) 0; }
+.vue[hidden] { display: none; }
+
+h2 { font-size: 1.25rem; margin: 0.5rem 0; }
+h3 { font-size: 1rem; margin: 0 0 0.5rem; }
+.chapeau { color: var(--texte-doux); margin-top: 0; }
+
+.carte {
+  background: var(--fond-carte);
+  border: 1px solid var(--trait);
+  border-radius: var(--rayon);
+  padding: var(--espace);
+  margin-bottom: var(--espace);
+}
+.carte[hidden] { display: none; }
+
+.alerte { border-color: var(--rouge); }
+.avis { margin: 0.5rem 0 0; padding: 0.5rem; border-radius: var(--rayon); background: var(--fond-doux); font-size: 0.9rem; }
+.avis[hidden] { display: none; }
+.aide { color: var(--texte-doux); font-size: 0.85rem; margin: 0.35rem 0; }
+.etiquette { color: var(--texte-doux); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.etat { margin-left: auto; font-size: 0.85rem; color: var(--texte-doux); }
+
+.ligne { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0.5rem 0; }
+.ligne > input[type="text"], .ligne > input[type="url"] { flex: 1 1 12rem; min-width: 0; }
+
+.visuellement-cache {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ formulaires */
+
+label { display: block; margin-top: 0.6rem; font-size: 0.9rem; color: var(--texte-doux); }
+label.ligne { display: flex; }
+
+input, select, button {
+  font: inherit;
+  border-radius: var(--rayon);
+  border: 1px solid var(--trait);
+  padding: 0.5rem 0.65rem;
+  background: var(--fond);
+  color: var(--texte);
+  max-width: 100%;
+}
+input[type="checkbox"] { width: auto; padding: 0; }
+input, select { width: 100%; }
+
+button {
+  background: var(--accent);
+  color: var(--accent-texte);
+  border-color: transparent;
+  cursor: pointer;
+  width: auto;
+}
+button:hover { filter: brightness(1.08); }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+code { background: var(--fond-doux); padding: 0.1rem 0.3rem; border-radius: 5px; font-size: 0.9em; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ fil */
+
+.fil { list-style: none; margin: 0 0 var(--espace); padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+
+.message {
+  background: var(--fond-carte);
+  border: 1px solid var(--trait);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--rayon);
+  padding: 0.5rem 0.65rem;
+}
+.message-entete { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; margin: 0 0 0.2rem; font-size: 0.8rem; color: var(--texte-doux); }
+.message-entete .auteur { font-weight: 600; color: var(--texte); }
+.message-texte { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.message.controle { border-left-color: var(--gris); color: var(--texte-doux); font-size: 0.9rem; }
+.message.non-verifie { border-left-color: var(--rouge); }
+.message.non-verifie .mention { color: var(--rouge); font-weight: 600; }
+.message.invalide { border-left-color: var(--rouge); border-style: dashed; }
+.message.invalide .mention { color: var(--rouge); }
+
+.zone-ecriture { position: sticky; bottom: 0; }
+.zone-ecriture[hidden] { display: none; }
+
+.pied { color: var(--texte-doux); font-size: 0.8rem; border-top: 1px solid var(--trait); padding-top: var(--espace); margin-top: var(--espace); }
+
+/* ------------------------------------------------------------- largeurs */
+
+/* Téléphone : on empile, et rien ne dépasse. */
+@media (max-width: 390px) {
+  body { padding: 0 0.5rem 2rem; }
+  .barre { flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+  .ligne { flex-direction: column; align-items: stretch; }
+  .ligne > button { width: 100%; }
+  .etat { margin-left: 0; }
+}
+
+/* Écran large : la colonne de lecture reste lisible, le fil respire. */
+@media (min-width: 900px) {
+  body { padding: 0 2rem 3rem; }
+  .fil { gap: 0.5rem; }
+  .message { padding: 0.6rem 0.9rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

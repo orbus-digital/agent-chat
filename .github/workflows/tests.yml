@@ -1,0 +1,32 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Aucune dépendance : rien à installer, rien à mettre en cache.
+      - name: Vérifier qu'aucune dépendance ne s'est glissée dans le projet
+        run: |
+          node -e '
+            const p = require("./package.json");
+            const n = Object.keys(p.dependencies ?? {}).length + Object.keys(p.devDependencies ?? {}).length;
+            if (n > 0) { console.error(`${n} dépendance(s) déclarée(s) : le projet doit rester sans dépendance`); process.exit(1); }
+          '
+
+      - name: Tests et portail de couverture
+        run: npm test

@@ -19,11 +19,18 @@ import { fileURLToPath } from 'node:url';
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LCOV = join(RACINE, 'coverage', 'lcov.info');
 
-/** AC-12 — le noyau cryptographique et le transport ne descendent pas sous 80 %. */
+/**
+ * AC-12 — le noyau cryptographique et le transport ne descendent pas sous 80 %.
+ * Les modules de l'interface sont tenus au même seuil : ce sont eux qui portent
+ * les règles observables du salon (mode observateur, TTL, clé absente).
+ */
 const SEUILS = {
   'lib/crypto.js': 80,
   'lib/sign.js': 80,
   'lib/ntfy.js': 80,
+  'web/js/etat.js': 80,
+  'web/js/salon.js': 80,
+  'web/js/app.js': 80,
 };
 
 rmSync(join(RACINE, 'coverage'), { recursive: true, force: true });
@@ -33,6 +40,7 @@ const res = spawnSync(process.execPath, [
   '--test',
   '--experimental-test-coverage',
   '--test-coverage-include=lib/**',
+  '--test-coverage-include=web/js/**',
   '--test-reporter=spec', '--test-reporter-destination=stdout',
   '--test-reporter=lcov', `--test-reporter-destination=${LCOV}`,
   'test/*.test.js',

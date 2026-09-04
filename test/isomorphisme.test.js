@@ -67,4 +67,22 @@ describe('publication de l\'interface', () => {
       assert.ok(existsSync(join(RACINE, 'web', 'lib', f)), `web/lib/${f} introuvable`);
     }
   });
+
+  test('le workflow Pages matérialise le lien : un artefact ne transporte pas les liens symboliques', () => {
+    const wf = readFileSync(join(RACINE, '.github', 'workflows', 'pages.yml'), 'utf8');
+    assert.match(wf, /rm web\/lib/, 'le lien n\'est pas retiré avant la copie');
+    assert.match(wf, /cp -r lib web\/lib/, 'le noyau n\'est pas copié dans l\'artefact');
+    assert.match(wf, /path: web/, 'ce n\'est pas web\/ qui est publié');
+  });
+
+  test('l\'interface ne référence le noyau que par des chemins relatifs à web/', () => {
+    const modules = readdirSync(join(RACINE, 'web', 'js')).filter((f) => f.endsWith('.js'));
+    for (const f of modules) {
+      const source = readFileSync(join(RACINE, 'web', 'js', f), 'utf8');
+      const sortants = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)]
+        .map((m) => m[1])
+        .filter((i) => i.startsWith('..') && !i.startsWith('../lib/'));
+      assert.deepEqual(sortants, [], `${f} sort de web/ : ${sortants.join(', ')}`);
+    }
+  });
 });
