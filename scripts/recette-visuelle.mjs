@@ -193,6 +193,19 @@ try {
       verifier(b.height <= 64, `${champ} garde une hauteur de champ`, `${Math.round(b.height)} px`);
     }
     verifier(await page.locator('#qr').isVisible(), 'le code QR du lien participant est affiché (§2.3)');
+
+    // Le presse-papier pour de vrai : un bouton qui copie sans le dire ne se
+    // distingue pas d'un bouton mort.
+    await contexte.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
+    await page.click('#copier-participant');
+    // Le presse-papier est asynchrone : on attend que la page ait tranché,
+    // plutôt que de lire un état intermédiaire.
+    await page.waitForFunction(() => document.getElementById('copie-avis').textContent.length > 0, null, { timeout: 5000 });
+    const avisCopie = await page.textContent('#copie-avis');
+    verifier(/copié/i.test(avisCopie), 'la copie du lien participant est confirmée', avisCopie);
+    const presse = await page.evaluate(() => navigator.clipboard.readText());
+    verifier(presse === await page.inputValue('#lien-participant'),
+      'c’est bien le lien participant qui est dans le presse-papier', presse.slice(0, 40));
     await capturer(page, '02-accueil-session-creee-390', true);
     plaintes.push(...page.plaintes);
     await contexte.close();
