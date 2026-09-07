@@ -191,6 +191,25 @@ describe('cli — usage et codes de retour', () => {
     }
   });
 
+  test('--ui choisit la base de l\'URL imprimée, sans passer par l\'environnement', async () => {
+    // Documenté dans le mode d'emploi et accepté par l'analyseur d'arguments :
+    // l'ignorer rendait la recette locale impossible autrement qu'en posant
+    // AGENTCHAT_UI_BASE, ce que le mode d'emploi ne dit nulle part.
+    const url = await creer(['--ui', 'http://127.0.0.1:8123']);
+    assert.ok(url.startsWith('http://127.0.0.1:8123/#t='), `base non appliquée : ${url}`);
+  });
+
+  test('--ui vaut aussi pour l\'URL du nouveau topic après une migration', async () => {
+    const url = await creer(['--as', 'A']);
+    const r = await lancer(['migrate', url, '--as', 'A', '--ui', 'http://127.0.0.1:8123']);
+    assert.equal(r.code, EXIT.OK);
+    assert.ok(r.out[0].startsWith('http://127.0.0.1:8123/#t='), `base non appliquée : ${r.out[0]}`);
+  });
+
+  test('sans --ui, la base reste celle de l\'environnement', async () => {
+    assert.ok((await creer()).startsWith(UI), 'la base par défaut ne doit pas bouger');
+  });
+
   test('une URL sans fragment est refusée : la clé n\'y est pas', async () => {
     const r = await lancer(['tail', 'https://exemple.test/chat/']);
     assert.equal(r.code, EXIT.USAGE);
