@@ -243,7 +243,7 @@ la suite ne dépend jamais du bus public et n'en consomme pas le quota.
 sur l'interface réellement servie, y crée une session **avec le CLI**, et vérifie ce qu'un humain
 verrait : la santé du bus, la taille des champs, le fait qu'un message soit lisible sur un
 téléphone de 390 px, le mode observateur, le thème sombre, et **zéro erreur console** (AC-13).
-Les captures sont déposées dans `coverage/recette/`.
+Les captures sont déposées dans `recette/` (hors de `coverage/`, que `npm test` efface).
 
 Elle demande Playwright, qui n'est **pas** une dépendance du dépôt et ne doit pas le devenir :
 ce README promet « Node 22 et un navigateur », et `npm test` reste sans dépendance. Installez-le

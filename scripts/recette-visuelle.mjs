@@ -32,7 +32,9 @@ const RACINE = resolve(join(dirname(fileURLToPath(import.meta.url)), '..'));
 const { values } = parseArgs({
   options: {
     bus: { type: 'string', default: 'https://ntfy.sh' },
-    captures: { type: 'string', default: join(RACINE, 'coverage', 'recette') },
+    // Hors de `coverage/`, que le portail de test efface à chaque `npm test` :
+    // les captures doivent survivre à la commande suivante.
+    captures: { type: 'string', default: join(RACINE, 'recette') },
     port: { type: 'string', default: '8123' },
     garder: { type: 'boolean', default: false },
   },
