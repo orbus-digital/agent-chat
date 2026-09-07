@@ -586,6 +586,55 @@ describe('page — accueil et création (AC-01, §2.3)', () => {
     assert.match(copies[1], /&ro=1$/);
   });
 
+  test('la copie est confirmée, et l\'on sait lequel des deux liens est parti (D-10)', async () => {
+    // Recette visuelle : le bouton « Copier » ne disait rien. Un presse-papier
+    // qui reçoit sans le dire ne se distingue pas d'un bouton mort — et l'on
+    // recopie alors le lien observateur en croyant tenir le lien participant.
+    const { doc } = await monter('', {
+      presse: { ecrire: async () => {} },
+      location: fausseAdresse(`${bus.base}/chat/`),
+    });
+    doc.getElementById('creer-nom').value = 'alice';
+    doc.getElementById('creer-serveur').value = bus.base;
+    await doc.getElementById('creer-form').declencher('submit');
+    assert.equal(doc.getElementById('copie-avis').textContent, '', 'rien n\'est annoncé avant qu\'on copie');
+
+    await doc.getElementById('copier-participant').declencher('click');
+    assert.match(doc.getElementById('copie-avis').textContent, /participant/i);
+    assert.match(doc.getElementById('copie-avis').textContent, /copié/i);
+
+    await doc.getElementById('copier-observateur').declencher('click');
+    assert.match(doc.getElementById('copie-avis').textContent, /observateur/i);
+  });
+
+  test('un presse-papier qui se refuse le dit, et rappelle qu\'on peut copier à la main (D-10)', async () => {
+    const { doc } = await monter('', {
+      presse: { ecrire: async () => { throw new Error('document non focalisé'); } },
+      location: fausseAdresse(`${bus.base}/chat/`),
+    });
+    doc.getElementById('creer-nom').value = 'alice';
+    doc.getElementById('creer-serveur').value = bus.base;
+    await doc.getElementById('creer-form').declencher('submit');
+    await doc.getElementById('copier-participant').declencher('click');
+
+    const avis = doc.getElementById('copie-avis').textContent;
+    assert.match(avis, /impossible/i);
+    assert.match(avis, /document non focalisé/, 'la raison du refus doit être dite');
+    assert.match(avis, /à la main|manuellement|sélectionn/i);
+  });
+
+  test('sans presse-papier du tout, la copie n\'est pas annoncée comme faite (D-10)', async () => {
+    const { doc } = await monter('', { presse: null, location: fausseAdresse(`${bus.base}/chat/`) });
+    doc.getElementById('creer-nom').value = 'alice';
+    doc.getElementById('creer-serveur').value = bus.base;
+    await doc.getElementById('creer-form').declencher('submit');
+    await doc.getElementById('copier-participant').declencher('click');
+
+    assert.equal(/copié/i.test(doc.getElementById('copie-avis').textContent), false,
+      'annoncer une copie qui n\'a pas eu lieu est pire que de ne rien dire');
+    assert.match(doc.getElementById('copie-avis').textContent, /impossible/i);
+  });
+
   test('le nom saisi à l\'accueil est mémorisé pour que le salon ne le redemande pas', async () => {
     const stockage = new Map();
     const memoire = {

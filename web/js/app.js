@@ -241,8 +241,27 @@ export function demarrer(monde) {
       app.lienCree = lien;
     });
 
-    for (const [bouton, champ] of [['copier-participant', 'lien-participant'], ['copier-observateur', 'lien-observateur']]) {
-      $(bouton).addEventListener('click', () => presse?.ecrire?.($(champ).value));
+    // Un presse-papier qui reçoit sans le dire ne se distingue pas d'un bouton
+    // mort — et l'on recopie alors le lien observateur en croyant tenir le lien
+    // participant. Chaque copie est donc annoncée, et nommée.
+    for (const [bouton, champ, quoi] of [
+      ['copier-participant', 'lien-participant', 'Lien participant'],
+      ['copier-observateur', 'lien-observateur', 'Lien observateur'],
+    ]) {
+      $(bouton).addEventListener('click', async () => {
+        if (!presse?.ecrire) {
+          $('copie-avis').textContent = `${quoi} : copie impossible depuis cette page. Sélectionnez le champ et copiez-le à la main.`;
+          return;
+        }
+        try {
+          await presse.ecrire($(champ).value);
+          $('copie-avis').textContent = `${quoi} copié dans le presse-papier.`;
+        } catch (err) {
+          // Le presse-papier se refuse hors contexte sécurisé, ou sans geste de
+          // l'utilisateur. Le dire, avec la raison, vaut mieux qu'un silence.
+          $('copie-avis').textContent = `${quoi} : copie impossible (${err.message}). Sélectionnez le champ et copiez-le à la main.`;
+        }
+      });
     }
     $('ouvrir-salon').addEventListener('click', () => {
       adresse.href = app.lienCree;
@@ -384,7 +403,14 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined') {
     document,
     location: window.location,
     fenetre: window,
-    presse: { ecrire: (t) => navigator.clipboard?.writeText(t) },
+    // Sans API presse-papier — page non sécurisée, navigateur ancien —, on
+    // échoue franchement plutôt que de rendre `undefined`, que l'appelant
+    // prendrait pour une copie réussie.
+    presse: {
+      ecrire: (t) => (navigator.clipboard
+        ? navigator.clipboard.writeText(t)
+        : Promise.reject(new Error('presse-papier indisponible sur cette page'))),
+    },
     memoire: {
       lire: (c) => { try { return window.localStorage.getItem(`agentchat:${c}`); } catch { return null; } },
       ecrire: (c, v) => { try { window.localStorage.setItem(`agentchat:${c}`, v); } catch { /* mode privé */ } },
