@@ -373,6 +373,34 @@ describe('page — accueil et création (AC-01, §2.3)', () => {
     assert.equal(copies[0], doc.getElementById('lien-participant').value);
     assert.match(copies[1], /&ro=1$/);
   });
+
+  test('le nom saisi à l\'accueil est mémorisé pour que le salon ne le redemande pas', async () => {
+    const stockage = new Map();
+    const memoire = {
+      lire: (c) => stockage.get(c) ?? null,
+      ecrire: (c, v) => stockage.set(c, v),
+    };
+    const { doc } = await monter('', {
+      memoire,
+      location: fausseAdresse(`${bus.base}/chat/`),
+    });
+    doc.getElementById('creer-nom').value = 'alice';
+    doc.getElementById('creer-serveur').value = bus.base;
+    await doc.getElementById('creer-form').declencher('submit');
+
+    assert.equal(stockage.get('nom'), 'alice',
+      'le nom du créateur doit être mémorisé avant l\'ouverture du salon');
+
+    // Le lien participant, ouvert dans un contexte qui partage la mémoire,
+    // ne doit pas rebasculer sur l'écran d'identité.
+    const hash = doc.getElementById('lien-participant').value.split('#')[1];
+    const salon = await monter(`#${hash}`, { memoire });
+    assert.equal(salon.doc.getElementById('identite').hidden, true,
+      'l\'écran d\'identité ne doit pas ré-apparaître');
+    assert.equal(salon.doc.getElementById('zone-ecriture').hidden, false,
+      'la zone d\'écriture doit être ouverte d\'entrée');
+    assert.equal(salon.doc.getElementById('nom-participant').textContent, 'alice');
+  });
 });
 
 describe('page — export et import (AC-09)', () => {

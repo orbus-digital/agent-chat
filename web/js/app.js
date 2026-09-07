@@ -150,6 +150,10 @@ export function demarrer(monde) {
         return;
       }
 
+      // On mémorise le nom du créateur : sans cela, l'ouverture du salon
+      // rebasculerait sur l'écran d'identité, alors que le nom est déjà connu.
+      memoire?.ecrire?.('nom', nom);
+
       const topic = generateTopic();
       const key = generateKey();
       const createdAt = now();
