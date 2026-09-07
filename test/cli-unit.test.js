@@ -12,6 +12,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FakeNtfy } from './helpers/fake-ntfy.js';
 import { run, EXIT } from '../lib/cli.js';
+import { generateTopic, generateKey, deriveWriteKey } from '../lib/crypto.js';
+import { encodeMessage, decodeMessage } from '../lib/protocol.js';
+import { publish } from '../lib/ntfy.js';
+import { buildSessionUrl } from '../lib/url.js';
+import { decodeB64u, encodeB64u } from '../lib/bytes.js';
 
 const UI = 'https://exemple.test/chat/';
 const HEURE = 3600_000;
@@ -44,6 +49,100 @@ async function lancer(argv, extra = {}) {
 const creer = async (argv = []) => (await lancer(['create', '--server', bus.base, ...argv])).out[0];
 const topicDe = (url) => new URLSearchParams(url.slice(url.indexOf('#') + 1)).get('t');
 const sessionDe = (topic) => JSON.parse(readFileSync(join(home, '.agentchat', `${topic}.json`), 'utf8'));
+
+const cleDe = (url) => decodeB64u(new URLSearchParams(url.slice(url.indexOf('#') + 1)).get('k'));
+
+/** Tous les `control:roster` publiés sur un topic, déchiffrés, dans l'ordre. */
+async function rostersDe(url) {
+  const topic = topicDe(url);
+  const key = cleDe(url);
+  const kw = await deriveWriteKey(key);
+  const lus = [];
+  for (const raw of bus.messages(topic)) {
+    try {
+      const m = await decodeMessage({ key, kw, topic, raw });
+      if (m?.kind === 'control' && m.meta?.type === 'roster') lus.push(m);
+    } catch { /* pas un roster lisible */ }
+  }
+  return lus;
+}
+
+/** Publie un roster comme le ferait un pair, avec le contenu qu'on veut. */
+async function publierRosterBrut(url, meta, from = 'pair') {
+  const topic = topicDe(url);
+  const key = cleDe(url);
+  const env = await encodeMessage({
+    key, kw: await deriveWriteKey(key), topic, from, kind: 'control', text: 'roster', meta,
+  });
+  return publish({ base: bus.base, topic, body: env.body, title: env.title, tags: env.tags, sig: env.sig });
+}
+
+describe('cli — une durée de vie ne s\'invente pas (D-09, R4)', () => {
+  test('rejoindre un salon dont aucun roster n\'est lisible n\'annonce aucune durée de vie', async () => {
+    // ntfy accuse réception avant de servir depuis son cache : un `join` juste
+    // après un `create` ne trouve parfois rien. Le rejoignant retombait alors
+    // sur 24 h et sur l'instant présent — **et publiait ce roster**. Une
+    // session créée pour 2 h devenait une session de 24 h pour tout le monde.
+    const topic = generateTopic();
+    const key = generateKey();
+    const url = buildSessionUrl({ topic, key, server: bus.base, uiBase: UI });
+
+    const r = await lancer(['join', url, '--as', 'B']);
+    assert.equal(r.code, EXIT.OK);
+
+    const [roster] = await rostersDe(url);
+    assert.ok(roster, 'le rejoignant doit tout de même annoncer sa présence');
+    assert.deepEqual(roster.meta.participants, ['B']);
+    assert.equal(Object.hasOwn(roster.meta, 'ttlH'), false, `durée de vie annoncée à tort : ${JSON.stringify(roster.meta)}`);
+    assert.equal(Object.hasOwn(roster.meta, 'createdAt'), false);
+    assert.match(r.stderr, /durée de vie/i);
+  });
+
+  test('rejoindre un salon dont le roster est lisible reprend sa durée de vie, sans la déplacer', async () => {
+    const url = await creer(['--ttl', '2', '--as', 'A']);
+    const avant = (await rostersDe(url))[0].meta;
+
+    horloge += 30 * 60_000;
+    await lancer(['join', url, '--as', 'B']);
+
+    const rosterDeB = (await rostersDe(url)).at(-1);
+    assert.equal(rosterDeB.meta.ttlH, 2, 'un arrivant ne redéfinit pas la durée du salon');
+    assert.equal(rosterDeB.meta.createdAt, avant.createdAt, 'ni sa date de départ');
+  });
+
+  test('une durée de vie annoncée plus tôt n\'est pas effacée par un roster muet', async () => {
+    const url = await creer(['--ttl', '2', '--as', 'A']);
+    const creation = (await rostersDe(url))[0].meta.createdAt;
+    // Un pair qui ne connaissait pas la durée de vie s'est annoncé sans elle.
+    await publierRosterBrut(url, { type: 'roster', participants: ['B'] }, 'B');
+
+    // C arrive d'ailleurs : aucun fichier de session local ne peut le renseigner,
+    // le bus est sa seule source.
+    const ailleurs = mkdtempSync(join(tmpdir(), 'agentchat-c-'));
+    try {
+      const r = await lancer(['join', url, '--as', 'C'], { home: ailleurs });
+      const sortie = JSON.parse(r.out[0]);
+      assert.equal(sortie.ttlH, 2, 'la durée de vie doit être reprise du roster qui la porte');
+      assert.equal(sortie.expiresAt, creation + 2 * HEURE);
+    } finally {
+      rmSync(ailleurs, { recursive: true, force: true });
+    }
+  });
+
+  test('faute de durée de vie connue, le rejoignant peut tout de même écrire', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const url = buildSessionUrl({ topic, key, server: bus.base, uiBase: UI });
+    await lancer(['join', url, '--as', 'B']);
+
+    // Ne rien savoir de la durée de vie n'est pas la même chose que la savoir
+    // dépassée : refuser d'écrire ici rendrait le CLI inutilisable dès que le
+    // cache du bus a tourné.
+    const r = await lancer(['send', url, 'bonjour']);
+    assert.equal(r.code, EXIT.OK, r.stderr);
+    assert.equal(JSON.parse(r.out[0]).sent, true);
+  });
+});
 
 describe('cli — le temps qui passe (AC-10, R4)', () => {
   test('rejoindre après le TTL se fait en lecture, sans annonce publiée', async () => {
