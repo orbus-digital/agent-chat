@@ -15,26 +15,26 @@ avant la promotion `dev` → `main`.
 Recette menée avec Chromium (Playwright) contre `npm run web` sur `127.0.0.1:8123`, et deux CLI
 `agentchat` contre le vrai `ntfy.sh`. Journal complet dans « Notes de revue ».
 
-- [ ] **D-01 — `npm test` est rouge.** Le test TTL de `interface-salon` attend un prédicat vrai
+- [x] **D-01 — `npm test` est rouge.** Le test TTL de `interface-salon` attend un prédicat vrai
       dès le départ (`ttl.expire` vaut `true` tant qu'aucun roster n'a été lu) : il n'attend donc
       rien, et l'assertion suivante gagne ou perd à la course. Vert isolément, rouge sous couverture.
-- [ ] **D-02 — Champs hauts de 192 px sur téléphone.** À ≤ 390 px, `.ligne` passe en colonne ;
+- [x] **D-02 — Champs hauts de 192 px sur téléphone.** À ≤ 390 px, `.ligne` passe en colonne ;
       `flex: 1 1 12rem` cesse d'être une largeur et devient une **hauteur**. La zone de saisie et
       les deux champs de lien deviennent des boîtes de 192 px.
-- [ ] **D-03 — Case « métadonnées privées » décrochée de son libellé** à ≤ 390 px : la case est
+- [x] **D-03 — Case « métadonnées privées » décrochée de son libellé** à ≤ 390 px : la case est
       empilée au-dessus du texte, centrée, sans lien visuel avec lui.
-- [ ] **D-04 — La zone d'écriture masque le fil.** `position: sticky; bottom: 0` + D-02 :
+- [x] **D-04 — La zone d'écriture masque le fil.** `position: sticky; bottom: 0` + D-02 :
       sur 390 × 844, le composeur occupe 311 px et se peint par-dessus les messages.
       **Aucun message n'est lisible sur un téléphone.**
-- [ ] **D-05 — Aucun défilement vers le message le plus récent.** 14 messages, `scrollY = 0` :
+- [x] **D-05 — Aucun défilement vers le message le plus récent.** 14 messages, `scrollY = 0` :
       l'arrivant voit le plus ancien et doit faire défiler à la main. Pour un fil en direct (AC-06),
       c'est le message qui vient d'arriver qu'il faut voir.
-- [ ] **D-06 — Indicateur de santé mort sur l'accueil.** `rafraichirSante()` sort tout de suite
+- [x] **D-06 — Indicateur de santé mort sur l'accueil.** `rafraichirSante()` sort tout de suite
       s'il n'y a pas de salon : l'accueil affiche « bus : vérification… » indéfiniment. AC-13
       demande que l'indicateur soit vert depuis l'interface.
-- [ ] **D-07 — `--ui` documenté mais ignoré.** `create` et `migrate` lisent `ctx.uiBase` et jamais
+- [x] **D-07 — `--ui` documenté mais ignoré.** `create` et `migrate` lisent `ctx.uiBase` et jamais
       `values.ui` : la recette locale n'est possible que par `AGENTCHAT_UI_BASE`.
-- [ ] **D-08 — La recette n'est pas rejouable.** Aucun scénario navigateur au dépôt. Ajouter
+- [x] **D-08 — La recette n'est pas rejouable.** Aucun scénario navigateur au dépôt. Ajouter
       `scripts/recette-visuelle.mjs` (`npm run recette`) : accueil, création, salon, observateur,
       clé absente, à 390 px et 1440 px, thèmes clair et sombre, **échec sur toute erreur console**
       et sur les régressions ci-dessus.
@@ -66,5 +66,61 @@ npm run web &                  # interface servie localement
 npm run recette                # scénario navigateur, 0 erreur console attendue
 ```
 
-## Notes de revue
-(à compléter en fin de lot)
+## Notes de revue — LOT 1
+
+**8 demandes sur 8**, `npm test` vert (couverture au-dessus du seuil sur les sept modules gardés :
+`lib/crypto` 98,6 % · `lib/sign` 100 % · `lib/ntfy` 99,5 % · `web/js/etat` 100 % · `web/js/salon`
+98,5 % · `web/js/app` 92,8 % · `web/js/qr` 100 %), `npm run recette` vert : 25 vérifications, zéro
+erreur console. Trois correctifs de l'atelier (nom mémorisé, écouteurs avant `demarrer`,
+`frame-ancestors` retiré du `<meta>`) sont repris tels quels au bas de la branche.
+
+### Ce que la recette a réellement changé
+
+Sur un téléphone de 390 × 844, **aucun message n'était lisible** avant ce lot. Pas « mal
+présenté » : la zone d'écriture occupait 311 px, se peignait par-dessus le fil, et la page restait
+bloquée en haut. Un salon de conversation où l'on ne voit aucune conversation passait pourtant
+315 tests verts — parce qu'aucun d'eux ne regardait un écran. C'est le seul enseignement du lot qui
+vaille d'être retenu : la suite couvrait les règles, et rien de ce qui les rend visibles.
+
+### Les trois pièges, et pourquoi ils n'étaient pas visibles autrement
+
+- **`flex-basis` change de sens avec la direction.** `.ligne` passe en colonne sous 390 px, et
+  `flex: 1 1 12rem` cesse alors d'être une largeur pour devenir une hauteur : un champ de saisie de
+  192 px. Rien ne le signale — ni le HTML, ni le CSS, ni un test de règle métier. Il faut mesurer
+  la boîte dans un navigateur, ce que fait désormais `npm run recette`.
+- **Une distance au bas de page ne dit pas si le lecteur suit.** La première version du suivi
+  mesurait « suis-je à moins de 120 px du bas ? » : pendant une rafale, la page grandit plus vite
+  qu'elle ne défile et la mesure décroche dès le sixième message, sans que le lecteur ait bougé.
+  Le navigateur a démenti l'idée ; on suit maintenant son **geste**, ce qu'un défilement provoqué
+  par nous ne peut pas imiter puisqu'il va toujours vers le bas.
+- **Un test peut attendre un drapeau déjà vrai.** `ttl.expire` vaut vrai tant qu'aucun roster n'a
+  été lu — le sens prudent du doute. Le test AC-10 l'attendait : il n'attendait donc rien, et
+  gagnait ou perdait à la course. Vert isolément, rouge sous couverture. C'est la deuxième fois que
+  ce dépôt trouve un test probabiliste ; le premier altérait un chiffre dans son base64.
+
+### Deux options documentées mais mortes
+
+`--ui` figurait dans le mode d'emploi et dans les options acceptées, sans être lu nulle part.
+L'indicateur de santé du bus sortait immédiatement s'il n'y avait pas de salon, c'est-à-dire
+toujours à l'accueil — le seul écran où l'on choisit son bus. Les deux ont la même forme : une
+promesse écrite que rien ne vérifiait. Elles ont désormais des tests, dont celui qui exige
+qu'**aucune requête ne parte** vers un bus que la politique de sécurité bloquerait.
+
+### Ce qui a été vérifié en vrai
+
+Deux CLI `agentchat` contre `ntfy.sh` public (`verified: true` des deux côtés), rejoints par un
+troisième participant depuis le navigateur, roster à trois, TTL de 2 h annoncé et tenu, export
+téléchargé puis réimporté. Captures dans `recette/`. Aucune dépendance ajoutée au dépôt :
+`npm audit` n'a rien à auditer, et c'est voulu (AC-14).
+
+### Ce qui reste, et qui n'est pas de ce lot
+
+- **`join` peut réinventer la durée de vie d'une session.** Quand le roster n'est pas encore
+  lisible — ntfy accuse réception avant de servir depuis son cache —, `join` retombe sur 24 h et
+  sur l'instant présent, **puis publie ce roster** : une session créée pour 2 h devient une session
+  de 24 h pour tout le monde. Observé une fois pendant la recette. C'est une règle métier (R4),
+  pas de la mise en page : à traiter dans un lot suivant.
+- **Aucun retour visible après « Copier »** un lien : le presse-papier reçoit bien le texte, mais
+  rien ne le dit.
+- **Activer GitHub Pages** sur `orbus-digital/agent-chat` (source : GitHub Actions) reste un geste
+  humain ; le workflow `pages.yml` est prêt.
