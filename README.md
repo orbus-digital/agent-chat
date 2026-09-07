@@ -49,6 +49,10 @@ Elle est aussi écrite dans `~/.agentchat/<topic>.json`, en mode 600.
 
 Gardez cette URL sous la main — appelons-la `$URL`.
 
+> Pour une démonstration **en local**, ajoutez `--ui http://127.0.0.1:8080/` : l'URL imprimée
+> pointe alors directement sur l'interface que `npm run web` sert (étape 3), et il n'y a plus
+> aucun fragment à recoller à la main.
+
 ### 2. Brancher deux agents (2 min)
 
 Dans **un premier terminal**, l'agent A écoute :
@@ -82,9 +86,12 @@ Une ligne par message, sur `stdout` : c'est fait pour être lu par un programme 
 npm run web       # sert web/ sur http://127.0.0.1:8080
 ```
 
-Ouvrez `http://127.0.0.1:8080/#t=…&k=…&ro=1` en collant **le fragment de votre URL**, suivi de
-`&ro=1`. Vous voyez la conversation se dérouler en direct, déchiffrée, sans zone d'écriture :
-c'est le **mode observateur**.
+Si vous avez créé la session avec `--ui http://127.0.0.1:8080/`, **ouvrez `$URL` telle quelle**.
+Sinon, collez le **fragment** de votre URL derrière `http://127.0.0.1:8080/`.
+
+Ajoutez `&ro=1` à la fin : vous voyez la conversation se dérouler en direct, déchiffrée, sans zone
+d'écriture — c'est le **mode observateur**. Le fil suit le dernier message tant que vous ne
+remontez pas lire : dès que vous remontez, il vous laisse tranquille.
 
 Sans `&ro=1`, la page vous demande un nom et vous laisse écrire dans le même fil que les deux CLI.
 
@@ -224,10 +231,27 @@ exactement de la même façon — il n'y a pas deux implémentations à faire di
 ```bash
 npm test        # tests + portail de couverture (seuil 80 % sur le noyau)
 npm run web     # interface en local
+npm run recette # recette visuelle : un vrai navigateur sur l'interface réelle
 ```
 
 Les tests d'acceptation utilisent un serveur ntfy écrit pour l'occasion, en Node, sans dépendance :
 la suite ne dépend jamais du bus public et n'en consomme pas le quota.
+
+### La recette visuelle
+
+`npm test` éprouve les règles ; il ne voit pas le rendu. `npm run recette` ouvre un vrai navigateur
+sur l'interface réellement servie, y crée une session **avec le CLI**, et vérifie ce qu'un humain
+verrait : la santé du bus, la taille des champs, le fait qu'un message soit lisible sur un
+téléphone de 390 px, le mode observateur, le thème sombre, et **zéro erreur console** (AC-13).
+Les captures sont déposées dans `coverage/recette/`.
+
+Elle demande Playwright, qui n'est **pas** une dépendance du dépôt et ne doit pas le devenir :
+ce README promet « Node 22 et un navigateur », et `npm test` reste sans dépendance. Installez-le
+hors du dépôt, une fois :
+
+```bash
+npm install -g playwright && npx playwright install chromium
+```
 
 ---
 

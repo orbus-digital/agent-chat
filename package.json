@@ -21,7 +21,8 @@
     "test": "node scripts/run-tests.mjs",
     "test:unit": "node --test test/*.test.js",
     "cli": "node bin/agentchat.js",
-    "web": "node scripts/serve-web.mjs"
+    "web": "node scripts/serve-web.mjs",
+    "recette": "node scripts/recette-visuelle.mjs"
   },
   "dependencies": {},
   "devDependencies": {}
