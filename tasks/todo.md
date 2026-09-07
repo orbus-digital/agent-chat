@@ -113,14 +113,38 @@ troisième participant depuis le navigateur, roster à trois, TTL de 2 h annonc�
 téléchargé puis réimporté. Captures dans `recette/`. Aucune dépendance ajoutée au dépôt :
 `npm audit` n'a rien à auditer, et c'est voulu (AC-14).
 
-### Ce qui reste, et qui n'est pas de ce lot
+### Ce qui restait après le lot 1
 
-- **`join` peut réinventer la durée de vie d'une session.** Quand le roster n'est pas encore
-  lisible — ntfy accuse réception avant de servir depuis son cache —, `join` retombe sur 24 h et
-  sur l'instant présent, **puis publie ce roster** : une session créée pour 2 h devient une session
-  de 24 h pour tout le monde. Observé une fois pendant la recette. C'est une règle métier (R4),
-  pas de la mise en page : à traiter dans un lot suivant.
-- **Aucun retour visible après « Copier »** un lien : le presse-papier reçoit bien le texte, mais
-  rien ne le dit.
+- **D-09** — `join` réinventait la durée de vie d'une session. → traité au lot 2.
+- **D-10** — aucun retour visible après « Copier » un lien. → traité au lot 2.
 - **Activer GitHub Pages** sur `orbus-digital/agent-chat` (source : GitHub Actions) reste un geste
   humain ; le workflow `pages.yml` est prêt.
+
+---
+
+## LOT 2 — les deux demandes que la recette a fait apparaître
+
+Branche `feat/agent-chat-relay-c20260907-0854-lot2`, **empilée** sur celle du lot 1 (PR #4 encore
+ouverte, comme les lots 1 et 2 de la V1 l'avaient été). Sa PR vise `dev`.
+
+- [x] **D-09 — Une durée de vie ne s'invente pas (R4).** `create --ttl 2` puis `join` aussitôt
+      après, et la session devient une session de 24 h **pour tout le monde** : ntfy accuse
+      réception avant de servir depuis son cache, le rejoignant ne trouve pas le roster du
+      créateur, retombe sur 24 h et sur l'instant présent, puis **publie ce roster**. Comme tout
+      client reprend la durée du dernier roster lu, la durée inventée par un arrivant remplace
+      celle du créateur.
+      → Une durée **supposée** n'est jamais publiée (`ttlSuppose`) : le rejoignant annonce sa
+      présence, rien de plus. Ne rien savoir de la durée n'est pas la savoir dépassée : il peut
+      écrire. Et un roster muet sur la durée n'efface plus celle qu'un roster antérieur portait —
+      `dernierRoster` remonte jusqu'à celui qui l'annonce.
+- [x] **D-10 — « Copier » ne disait rien.** Un presse-papier qui reçoit sans le dire ne se
+      distingue pas d'un bouton mort, et l'on recopie alors le lien observateur en croyant tenir
+      le lien participant — l'un donne le droit d'écrire, l'autre non.
+      → Une ligne d'état nomme le lien copié ; un refus du presse-papier est dit avec sa raison et
+      le repli manuel ; sans API du tout, on échoue franchement au lieu de rendre `undefined`, que
+      l'appelant prenait pour un succès.
+
+### Vérification du lot 2
+
+`npm test` vert · `npm run recette` vert, **27 vérifications**, dont la lecture réelle du
+presse-papier du navigateur pour s'assurer que c'est bien le lien participant qui s'y trouve.
