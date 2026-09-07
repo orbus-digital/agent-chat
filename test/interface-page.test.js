@@ -389,24 +389,65 @@ describe('page — le fil suit le dernier message (D-05, AC-06)', () => {
   });
 });
 
-describe('fenêtre — savoir si le lecteur est en bas du fil (D-05)', () => {
-  const fenetre = (documentElement) => defilementDeLaFenetre({ documentElement });
+describe('fenêtre — le fil suit le lecteur, pas la hauteur de la page (D-05)', () => {
+  /** Une fenêtre dont on peut déclencher le défilement à la main. */
+  function fausseFenetre(documentElement = { scrollHeight: 2000, scrollTop: 0, clientHeight: 800 }) {
+    const ecouteurs = [];
+    const fenetre = { addEventListener: (type, fn) => { if (type === 'scroll') ecouteurs.push(fn); } };
+    const port = defilementDeLaFenetre({ documentElement }, fenetre);
+    return {
+      port,
+      documentElement,
+      /** Le lecteur (ou nous) déplace la page, puis le navigateur prévient. */
+      defilerA(haut) { documentElement.scrollTop = haut; for (const fn of ecouteurs) fn(); },
+    };
+  }
 
-  test('collé en bas : le fil suit', () => {
-    assert.equal(fenetre({ scrollHeight: 2000, scrollTop: 1200, clientHeight: 800 }).auBas(), true);
+  test('au départ, le fil suit', () => {
+    assert.equal(fausseFenetre().port.auBas(), true);
   });
 
-  test('à quelques pixels du bas : le fil suit encore', () => {
-    assert.equal(fenetre({ scrollHeight: 2000, scrollTop: 1120, clientHeight: 800 }).auBas(), true);
+  test('une rafale de messages ne fait pas décrocher le fil : la page grandit, le lecteur n\'a rien fait', () => {
+    const f = fausseFenetre({ scrollHeight: 900, scrollTop: 0, clientHeight: 800 });
+    // C'est le piège que la recette a révélé : mesurer la distance au bas
+    // aurait fait décrocher dès le sixième message, sans un geste du lecteur.
+    for (const hauteur of [1000, 1200, 1500, 2000]) {
+      f.documentElement.scrollHeight = hauteur;
+      assert.equal(f.port.auBas(), true, `décroché à ${hauteur} px de page`);
+    }
   });
 
-  test('remonté dans l\'historique : le fil ne bouge pas', () => {
-    assert.equal(fenetre({ scrollHeight: 2000, scrollTop: 200, clientHeight: 800 }).auBas(), false);
+  test('le lecteur remonte : le fil cesse de suivre', () => {
+    const f = fausseFenetre();
+    f.defilerA(1200);
+    f.defilerA(400);
+    assert.equal(f.port.auBas(), false);
+  });
+
+  test('le lecteur redescend au bas : le fil reprend', () => {
+    const f = fausseFenetre();
+    f.defilerA(1200);
+    f.defilerA(400);
+    assert.equal(f.port.auBas(), false, 'remonté : le fil doit le laisser lire');
+    f.defilerA(1200);
+    assert.equal(f.port.auBas(), true, '2000 − 1200 − 800 = 0 : il est revenu en bas');
+  });
+
+  test('descendre sans atteindre le bas ne fait pas décrocher : le lecteur va vers le neuf', () => {
+    const f = fausseFenetre();
+    f.defilerA(400);
+    assert.equal(f.port.auBas(), true);
+  });
+
+  test('notre propre défilement va vers le bas : il ne se prend pas pour un geste du lecteur', () => {
+    const f = fausseFenetre();
+    for (const haut of [200, 600, 1200]) f.defilerA(haut);
+    assert.equal(f.port.auBas(), true);
   });
 
   test('sans mesure possible, le fil suit : ne rien voir arriver est le pire des cas', () => {
-    assert.equal(fenetre(undefined).auBas(), true);
-    assert.equal(fenetre({}).auBas(), true);
+    assert.equal(defilementDeLaFenetre(undefined, null).auBas(), true);
+    assert.equal(defilementDeLaFenetre({}, null).auBas(), true);
   });
 });
 

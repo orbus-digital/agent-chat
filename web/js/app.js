@@ -23,19 +23,37 @@ export const MARGE_BAS_PX = 120;
 /**
  * Le fil suit le dernier message — sauf si le lecteur est remonté lire.
  *
- * La mesure est prise **avant** d'ajouter le message : après, la hauteur a
- * changé et personne n'est plus « en bas ». Sans mesure possible, on suit :
- * ne pas voir arriver un message est pire que d'être ramené en bas.
+ * Ce n'est **pas** une mesure de la distance au bas de la page : pendant une
+ * rafale d'arrivée, le fil grandit plus vite qu'il ne défile, et cette distance
+ * dépasse aussitôt n'importe quel seuil. Le lecteur, lui, n'a rien fait. On
+ * suit donc son geste : remonter arrête le suivi, redescendre au bas le
+ * reprend. Un défilement provoqué par nous va toujours vers le bas, il ne peut
+ * donc pas se prendre pour un geste du lecteur.
  *
  * @param {{documentElement?:{scrollHeight:number, scrollTop:number, clientHeight:number}}} doc
+ * @param {{addEventListener?:Function}|null} fenetre
  */
-export function defilementDeLaFenetre(doc, marge = MARGE_BAS_PX) {
+export function defilementDeLaFenetre(doc, fenetre = null, marge = MARGE_BAS_PX) {
+  const haut = () => doc?.documentElement?.scrollTop ?? 0;
+  const distanceAuBas = () => {
+    const d = doc?.documentElement;
+    // Sans mesure possible, on suit : ne pas voir arriver un message est pire
+    // que d'être ramené en bas.
+    if (!d || !Number.isFinite(d.scrollHeight) || !Number.isFinite(d.clientHeight)) return 0;
+    return d.scrollHeight - (d.scrollTop ?? 0) - d.clientHeight;
+  };
+
+  let suit = true;
+  let precedent = haut();
+  fenetre?.addEventListener?.('scroll', () => {
+    const courant = haut();
+    if (courant < precedent - 2) suit = false;
+    else if (distanceAuBas() <= marge) suit = true;
+    precedent = courant;
+  }, { passive: true });
+
   return {
-    auBas: () => {
-      const d = doc?.documentElement;
-      if (!d || !Number.isFinite(d.scrollHeight) || !Number.isFinite(d.clientHeight)) return true;
-      return d.scrollHeight - (d.scrollTop ?? 0) - d.clientHeight <= marge;
-    },
+    auBas: () => suit,
     vers: (el) => el?.scrollIntoView?.({ block: 'end' }),
   };
 }
@@ -61,7 +79,8 @@ export function demarrer(monde) {
     lireFichier = null,
     memoire = null,
     fetchImpl = (...a) => fetch(...a),
-    defilement = defilementDeLaFenetre(doc),
+    fenetre = null,
+    defilement = defilementDeLaFenetre(doc, fenetre),
   } = monde;
 
   const $ = (id) => doc.getElementById(id);
@@ -364,6 +383,7 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined') {
   demarrer({
     document,
     location: window.location,
+    fenetre: window,
     presse: { ecrire: (t) => navigator.clipboard?.writeText(t) },
     memoire: {
       lire: (c) => { try { return window.localStorage.getItem(`agentchat:${c}`); } catch { return null; } },
