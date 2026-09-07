@@ -1,119 +1,126 @@
-# Tâche : agent-chat-relay V1 — LOT 2 (interface, archive, TTL, migration, publication)
+# Tâche : agent-chat-relay — recette visuelle V1 et correctifs UI (LOT 1)
 
-Unité ADLC `agent-chat-relay-c20260904-1840` · spec `specs/agent-chat-relay/spec.md` **V1.1** ·
-16 AC au total · LOT 1 livré (PR #1, 8/16).
+Unité ADLC `agent-chat-relay-c20260907-0854` · spec `specs/agent-chat-relay/spec.md` **V1.1** ·
+branche `feat/agent-chat-relay-c20260907-0854-lot1` depuis `dev`.
 
-## Objectif du lot
+## Objectif
 
-Les 8 demandes restantes : **AC-06, AC-09, AC-10, AC-12, AC-13, AC-14, AC-15, AC-16** → 16/16.
+La V1 est fonctionnellement complète (16/16 AC, PR #1 et #2 fusionnées dans `dev`). Il restait
+la seule chose que `npm test` ne sait pas voir : **le rendu**. Cette unité passe l'interface au
+navigateur réel, fait converser deux CLI contre `ntfy.sh`, et corrige ce que la recette révèle,
+avant la promotion `dev` → `main`.
 
-## Décision d'architecture qui commande tout le lot
+## Ce que la recette a révélé
 
-L'interface doit chiffrer et vérifier **exactement** comme le CLI. Deux implémentations
-(`node:crypto` côté CLI, WebCrypto côté navigateur) auraient divergé un jour, et la divergence
-d'un protocole de chiffrement est silencieuse : elle ne casse pas un test, elle rend un message
-illisible ou, pire, faussement authentifié.
+Recette menée avec Chromium (Playwright) contre `npm run web` sur `127.0.0.1:8123`, et deux CLI
+`agentchat` contre le vrai `ntfy.sh`. Journal complet dans « Notes de revue ».
 
-→ **Un seul noyau isomorphe**, écrit en **WebCrypto pur** (disponible nativement dans Node 22 comme
-dans tout navigateur), sans `Buffer`, sans `node:*`. Il vit dans `web/js/core/` — le dossier que
-GitHub Pages publie — et `lib/` n'en est plus qu'une façade Node, plus `session.js` qui, lui, est
-légitimement propre à Node (système de fichiers).
+- [x] **D-01 — `npm test` est rouge.** Le test TTL de `interface-salon` attend un prédicat vrai
+      dès le départ (`ttl.expire` vaut `true` tant qu'aucun roster n'a été lu) : il n'attend donc
+      rien, et l'assertion suivante gagne ou perd à la course. Vert isolément, rouge sous couverture.
+- [x] **D-02 — Champs hauts de 192 px sur téléphone.** À ≤ 390 px, `.ligne` passe en colonne ;
+      `flex: 1 1 12rem` cesse d'être une largeur et devient une **hauteur**. La zone de saisie et
+      les deux champs de lien deviennent des boîtes de 192 px.
+- [x] **D-03 — Case « métadonnées privées » décrochée de son libellé** à ≤ 390 px : la case est
+      empilée au-dessus du texte, centrée, sans lien visuel avec lui.
+- [x] **D-04 — La zone d'écriture masque le fil.** `position: sticky; bottom: 0` + D-02 :
+      sur 390 × 844, le composeur occupe 311 px et se peint par-dessus les messages.
+      **Aucun message n'est lisible sur un téléphone.**
+- [x] **D-05 — Aucun défilement vers le message le plus récent.** 14 messages, `scrollY = 0` :
+      l'arrivant voit le plus ancien et doit faire défiler à la main. Pour un fil en direct (AC-06),
+      c'est le message qui vient d'arriver qu'il faut voir.
+- [x] **D-06 — Indicateur de santé mort sur l'accueil.** `rafraichirSante()` sort tout de suite
+      s'il n'y a pas de salon : l'accueil affiche « bus : vérification… » indéfiniment. AC-13
+      demande que l'indicateur soit vert depuis l'interface.
+- [x] **D-07 — `--ui` documenté mais ignoré.** `create` et `migrate` lisent `ctx.uiBase` et jamais
+      `values.ui` : la recette locale n'est possible que par `AGENTCHAT_UI_BASE`.
+- [x] **D-08 — La recette n'est pas rejouable.** Aucun scénario navigateur au dépôt. Ajouter
+      `scripts/recette-visuelle.mjs` (`npm run recette`) : accueil, création, salon, observateur,
+      clé absente, à 390 px et 1440 px, thèmes clair et sombre, **échec sur toute erreur console**
+      et sur les régressions ci-dessus.
 
-Conséquence : `seal`/`open`/`sign` deviennent asynchrones (WebCrypto l'est). Le CLI l'était déjà.
+## Ce que la recette a validé (sans correctif)
 
-## Plan
-
-- [ ] **Noyau isomorphe** — `web/js/core/{bytes,crypto,sign,url,protocol,ntfy}.js` en WebCrypto pur ;
-      `lib/*.js` réduits à des réexports ; tests existants adaptés (async) et **toujours verts**
-- [ ] **AC-15 `--private-meta`** — `X-Title: ac`, tag `m` ; `from`/`kind` dans le clair chiffré ;
-      l'AAD se construit sur ce qui est **réellement publié**, donc reste vérifiable des deux côtés
-- [ ] **AC-09 export / replay / import** — `agentchat export` (JSON chiffré), `agentchat replay`
-      **sans réseau**, et le même fichier importable dans l'interface
-- [ ] **AC-10 TTL** — refus d'écrire passé le TTL, côté CLI (code 3) **et** côté interface ;
-      lecture et export restent possibles
-- [ ] **AC-16 `control:migrate`** — `agentchat migrate` publie l'ordre, `tail` bascule sur le nouveau
-      topic sans perte (5 messages avant, 5 après)
-- [ ] **AC-06 + AC-13 interface** — `web/index.html` + modules : accueil (créer → URL + QR), salon
-      (fil déchiffré en direct, roster, état de connexion, export/import, sélecteur de serveur),
-      mode observateur `ro=1` sans zone d'écriture, « clé absente » sans fragment `k` ;
-      CSP stricte `default-src 'self'; connect-src <NTFY_BASE_URL>`, 390 px et écran large,
-      thème clair/sombre, indicateur `GET {NTFY}/v1/health`
-- [ ] **Publication Pages** — workflow GitHub Actions publiant `web/` (le mode « branche » de Pages
-      ne sait servir que `/` ou `/docs`, jamais `/web` : l'artefact est donc explicite)
-- [ ] **AC-12** — tests d'intégration complets, couverture ≥ 80 % maintenue sur le noyau
-- [ ] **AC-14 README** — mode d'emploi vérifiable en moins de 10 minutes, Node 22 + navigateur
-- [ ] Commits conventionnels, PR vers `dev`, compteur d'unité à 16/16
+Deux CLI conversent contre `ntfy.sh` en `verified:true` · le fil se déchiffre en direct dans le
+navigateur · le roster se remplit · le mode observateur n'affiche pas de zone d'écriture · « clé
+absente » sans fragment `k` · export téléchargé puis réimporté (14 → 28 messages) · thème sombre et
+écran large corrects · navigation clavier · **zéro erreur console** sur tous les parcours.
 
 ## Risques
 
-- **Refactorisation d'un noyau vert** : chaque module est déplacé puis les tests sont relancés
-  immédiatement ; aucune fonctionnalité n'est ajoutée pendant le déplacement.
-- **CSP stricte** : `connect-src` doit contenir le serveur ntfy choisi. Un sélecteur de serveur
-  libre et une CSP stricte sont contradictoires ; l'interface documente et applique une liste
-  restreinte (méta CSP + vérification à l'exécution).
-- **Pas de dépendance** : le QR code est dessiné par un encodeur maison minimal, ou remplacé par un
-  lien copiable si l'encodeur devient plus coûteux que le service rendu.
-- **Dépôt public (R6)** : aucun secret, aucun nom de client, aucun projet interne dans le code,
-  les tests, les jeux d'essai.
+- **CSS sans test automatisé** : c'est précisément pourquoi D-08 vient avec les correctifs et non
+  après. Chaque correctif de mise en page est écrit **après** l'assertion qui le réclame.
+- **Playwright n'est pas une dépendance du dépôt** et ne doit pas le devenir : AC-14 promet « Node 22
+  et un navigateur seulement ». `scripts/recette-visuelle.mjs` le résout dynamiquement et se
+  déclare ignoré, avec la marche à suivre, s'il est absent. `npm test` reste sans dépendance.
 
 ## Retour arrière
 
-`git checkout dev && git branch -D feat/agent-chat-relay-lot2`. Le lot est empilé sur
-`feat/agent-chat-relay-lot1` (PR #1 encore ouverte) ; sa PR vise `dev`.
+`git checkout dev && git branch -D feat/agent-chat-relay-c20260907-0854-lot1`.
 
 ## Vérification
 
 ```bash
-npm test                 # unitaires + acceptation + portail de couverture
-npx serve web            # interface : accueil, salon, observateur, import d'export
+npm test                       # unitaires + acceptation + portail de couverture
+npm run web &                  # interface servie localement
+npm run recette                # scénario navigateur, 0 erreur console attendue
 ```
 
-## Notes de revue
-(à compléter en fin de lot)
+## Notes de revue — LOT 1
 
-## Notes de revue — LOT 2
+**8 demandes sur 8**, `npm test` vert (couverture au-dessus du seuil sur les sept modules gardés :
+`lib/crypto` 98,6 % · `lib/sign` 100 % · `lib/ntfy` 99,5 % · `web/js/etat` 100 % · `web/js/salon`
+98,5 % · `web/js/app` 92,8 % · `web/js/qr` 100 %), `npm run recette` vert : 25 vérifications, zéro
+erreur console. Trois correctifs de l'atelier (nom mémorisé, écouteurs avant `demarrer`,
+`frame-ancestors` retiré du `<meta>`) sont repris tels quels au bas de la branche.
 
-**301 tests verts**, couverture au-dessus du seuil sur les sept modules gardés
-(`lib/crypto` 98,6 % · `lib/sign` 100 % · `lib/ntfy` 99,5 % · `web/js/etat` 100 % ·
-`web/js/salon` 98,4 % · `web/js/app` 89,6 % · `web/js/qr` 100 %).
+### Ce que la recette a réellement changé
 
-### La décision qui a commandé le lot
+Sur un téléphone de 390 × 844, **aucun message n'était lisible** avant ce lot. Pas « mal
+présenté » : la zone d'écriture occupait 311 px, se peignait par-dessus le fil, et la page restait
+bloquée en haut. Un salon de conversation où l'on ne voit aucune conversation passait pourtant
+315 tests verts — parce qu'aucun d'eux ne regardait un écran. C'est le seul enseignement du lot qui
+vaille d'être retenu : la suite couvrait les règles, et rien de ce qui les rend visibles.
 
-Le noyau est devenu **isomorphe**, en WebCrypto pur. C'était l'alternative au fait d'écrire deux
-implémentations du protocole, une par runtime — et une divergence entre elles n'aurait cassé aucun
-test : elle aurait rendu un message illisible, ou faussement authentifié. `web/lib` est un lien
-symbolique vers `lib/`, donc GitHub Pages sert exactement les fichiers que la suite éprouve, sans
-copie et sans étape de construction. `test/isomorphisme.test.js` garde l'invariant, parce que rien
-d'autre ne signalerait une régression qui réintroduit `Buffer` : le CLI resterait vert, et
-l'interface tomberait en production.
+### Les trois pièges, et pourquoi ils n'étaient pas visibles autrement
 
-### Ce qui a été appris en route
+- **`flex-basis` change de sens avec la direction.** `.ligne` passe en colonne sous 390 px, et
+  `flex: 1 1 12rem` cesse alors d'être une largeur pour devenir une hauteur : un champ de saisie de
+  192 px. Rien ne le signale — ni le HTML, ni le CSS, ni un test de règle métier. Il faut mesurer
+  la boîte dans un navigateur, ce que fait désormais `npm run recette`.
+- **Une distance au bas de page ne dit pas si le lecteur suit.** La première version du suivi
+  mesurait « suis-je à moins de 120 px du bas ? » : pendant une rafale, la page grandit plus vite
+  qu'elle ne défile et la mesure décroche dès le sixième message, sans que le lecteur ait bougé.
+  Le navigateur a démenti l'idée ; on suit maintenant son **geste**, ce qu'un défilement provoqué
+  par nous ne peut pas imiter puisqu'il va toujours vers le bas.
+- **Un test peut attendre un drapeau déjà vrai.** `ttl.expire` vaut vrai tant qu'aucun roster n'a
+  été lu — le sens prudent du doute. Le test AC-10 l'attendait : il n'attendait donc rien, et
+  gagnait ou perdait à la course. Vert isolément, rouge sous couverture. C'est la deuxième fois que
+  ce dépôt trouve un test probabiliste ; le premier altérait un chiffre dans son base64.
 
-- **GitHub Pages ne sait pas servir `/web`** en mode « branche » : seulement la racine ou `/docs`.
-  D'où un workflow qui construit l'artefact et matérialise le lien symbolique au dernier moment.
-- **`ntfy` accuse réception avant de servir le message dans son cache** : un `join` immédiatement
-  après un `create` ne trouve pas toujours le roster. Sans conséquence — les rosters sont cumulatifs
-  et le suivant complète la liste — mais le taire aurait donné à croire la session vide, donc le CLI
-  le dit maintenant.
-- **Une CSP stricte et un sélecteur de serveur libre se contredisent.** L'interface applique une
-  liste restreinte (`connect-src`) et explique le refus au lieu de laisser une requête échouer sans
-  raison visible.
-- **Le double de DOM est construit depuis les identifiants réels de `index.html`**, attribut
-  `hidden` compris. Un identifiant renommé dans la page sans l'être dans le code fait donc échouer
-  les tests, alors qu'un navigateur ne l'aurait signalé qu'à l'exécution.
+### Deux options documentées mais mortes
 
-### Le code QR (§2.3)
+`--ui` figurait dans le mode d'emploi et dans les options acceptées, sans être lu nulle part.
+L'indicateur de santé du bus sortait immédiatement s'il n'y avait pas de salon, c'est-à-dire
+toujours à l'accueil — le seul écran où l'on choisit son bus. Les deux ont la même forme : une
+promesse écrite que rien ne vérifiait. Elles ont désormais des tests, dont celui qui exige
+qu'**aucune requête ne parte** vers un bus que la politique de sécurité bloquerait.
 
-Écrit sur place, sans dépendance : la page ne charge aucune ressource externe. Un QR faux étant
-pire que pas de QR, il est éprouvé par trois garde-fous indépendants — les informations de format
-et de version comparées aux tables publiées de la norme, les mots de correction vérifiés par leurs
-**syndromes** (calcul que l'encodeur ne fait jamais), et une relecture module par module qui doit
-rendre le texte de départ. Un test retourne délibérément un module pour prouver que la vérification
-a du mordant.
+### Ce qui a été vérifié en vrai
 
-### Ce qui reste à un humain
+Deux CLI `agentchat` contre `ntfy.sh` public (`verified: true` des deux côtés), rejoints par un
+troisième participant depuis le navigateur, roster à trois, TTL de 2 h annoncé et tenu, export
+téléchargé puis réimporté. Captures dans `recette/`. Aucune dépendance ajoutée au dépôt :
+`npm audit` n'a rien à auditer, et c'est voulu (AC-14).
 
-`npm test` couvre les règles, pas le rendu. Restent à voir dans un vrai navigateur : l'absence
-d'erreur en console, l'aspect à 390 px et sur grand écran, et le thème sombre. Le README donne la
-marche à suivre en quatre étapes (`npm run web`), et la démonstration CLI a été rejouée telle quelle
-contre `ntfy.sh` : deux agents ont conversé, le message est arrivé `verified: true`.
+### Ce qui reste, et qui n'est pas de ce lot
+
+- **`join` peut réinventer la durée de vie d'une session.** Quand le roster n'est pas encore
+  lisible — ntfy accuse réception avant de servir depuis son cache —, `join` retombe sur 24 h et
+  sur l'instant présent, **puis publie ce roster** : une session créée pour 2 h devient une session
+  de 24 h pour tout le monde. Observé une fois pendant la recette. C'est une règle métier (R4),
+  pas de la mise en page : à traiter dans un lot suivant.
+- **Aucun retour visible après « Copier »** un lien : le presse-papier reçoit bien le texte, mais
+  rien ne le dit.
+- **Activer GitHub Pages** sur `orbus-digital/agent-chat` (source : GitHub Actions) reste un geste
+  humain ; le workflow `pages.yml` est prêt.

@@ -30,7 +30,11 @@ export class FauxElement {
     this.files = null;
     this.ecouteurs = new Map();
     this.clics = 0;
+    this.defilements = 0;
   }
+
+  /** Le navigateur en a une ; le double la compte, pour dire si le fil a suivi. */
+  scrollIntoView() { this.defilements += 1; }
 
   append(enfant) { this.children.push(enfant); return enfant; }
   replaceChildren(...enfants) { this.children = enfants; }

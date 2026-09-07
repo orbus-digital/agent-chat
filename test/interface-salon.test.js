@@ -144,6 +144,18 @@ describe('salon — écriture et mode observateur (AC-06, AC-08)', () => {
     await assert.rejects(() => salon.envoyer('anonyme'), /nom/i);
   });
 
+  test('tant qu\'aucun roster n\'a été lu, la durée de vie est inconnue et l\'écriture reste permise', async () => {
+    const salon = ouvrir({ topic: generateTopic(), key: generateKey(), participant: 'bob' });
+    await salon.demarrer({ onMessage: () => {} });
+
+    // `ttl.expire` vaut **vrai** avant tout roster : c'est le sens prudent du
+    // doute (etat.js), pas une session expirée. Attendre ce seul drapeau ne
+    // prouve donc rien — c'est `ttlInconnu` qui dit si le roster est arrivé.
+    assert.equal(salon.ttlInconnu, true);
+    assert.equal(salon.ttl.expire, true);
+    await assert.doesNotReject(() => salon.envoyer('avant tout roster'));
+  });
+
   test('passé le TTL annoncé par le roster, l\'écriture est refusée (AC-10)', async () => {
     const topic = generateTopic();
     const key = generateKey();
@@ -155,7 +167,12 @@ describe('salon — écriture et mode observateur (AC-06, AC-08)', () => {
       topic, key, from: 'alice', kind: 'control', text: 'roster',
       meta: { type: 'roster', participants: ['alice'], ttlH: 1, createdAt: 1_780_000_000_000 },
     });
-    await attendre(() => salon.ttl.expire === true);
+    // On attend que le roster ait été **lu**, pas que `ttl.expire` soit vrai :
+    // il l'est déjà avant toute lecture, si bien que l'attente serait vide et
+    // l'assertion suivante jouée à la course (elle l'était : verte isolément,
+    // rouge sous couverture).
+    await attendre(() => salon.ttlInconnu === false);
+    assert.equal(salon.ttl.expire, true);
     await assert.rejects(() => salon.envoyer('trop tard'), /expir/i);
   });
 });

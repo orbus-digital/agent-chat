@@ -23,7 +23,7 @@ import { generateKey, generateTopic } from '../lib/crypto.js';
 import { buildSessionUrl } from '../lib/url.js';
 import { encodeB64u } from '../lib/bytes.js';
 import { Salon } from '../web/js/salon.js';
-import { demarrer, busAutorise, BUS_AUTORISES } from '../web/js/app.js';
+import { demarrer, busAutorise, BUS_AUTORISES, defilementDeLaFenetre } from '../web/js/app.js';
 import { versSvg } from '../web/js/qr.js';
 
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,10 +45,20 @@ describe('page — politique de sécurité et ressources (AC-13)', () => {
   });
 
   test('elle ferme ce qui n\'a pas à être ouvert', () => {
-    for (const directive of [/object-src 'none'/, /base-uri 'none'/, /frame-ancestors 'none'/]) {
+    for (const directive of [/object-src 'none'/, /base-uri 'none'/, /form-action 'none'/]) {
       assert.match(csp, directive);
     }
     assert.equal(/unsafe-inline|unsafe-eval/.test(csp), false, 'la CSP se relâche');
+  });
+
+  test('aucune directive silencieusement ignorée dans une CSP en <meta> — pas de bruit console', () => {
+    // `frame-ancestors`, `report-uri`, `report-to` et `sandbox` ne s'appliquent
+    // qu'à partir d'un en-tête HTTP. Les laisser dans un <meta> ne protège de
+    // rien et imprime un avertissement à chaque chargement — ce que la recette
+    // visuelle a signalé. On les tient hors de la CSP en <meta>.
+    for (const ignore of [/frame-ancestors/, /report-uri/, /report-to/, /\bsandbox\b/]) {
+      assert.equal(ignore.test(csp), false, `${ignore} ne devrait pas figurer dans un <meta>`);
+    }
   });
 
   test('aucune ressource externe : ni script, ni feuille de style, ni image d\'ailleurs', () => {
@@ -253,6 +263,49 @@ describe('page — salon en direct (AC-06)', () => {
   });
 });
 
+describe('page — attaches d\'événements du salon', () => {
+  test('les listeners #identite et #zone-ecriture sont attachés avant tout `await`', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const doc = documentDeLaPage();
+    const attaches = { avantDemarrer: null };
+    const fauxSalon = {
+      topic, server: bus.base, ro: false, participant: null,
+      participants: [], ttl: { expire: false, resteLisible: '' }, ttlInconnu: true,
+      async demarrer(cbs) {
+        // Instant où l'application pourrait commencer à yielder — les listeners
+        // doivent déjà être posés, sinon une soumission arrivée pendant l'attente
+        // navigue à sa place et le nom se perd sans avertissement.
+        attaches.avantDemarrer = {
+          identite: (doc.getElementById('identite').ecouteurs.get('submit') ?? []).length,
+          ecriture: (doc.getElementById('zone-ecriture').ecouteurs.get('submit') ?? []).length,
+        };
+        cbs?.onEtat?.({ connecte: true });
+      },
+      arreter() {},
+      async annoncer() {},
+      async envoyer() {},
+      async exporter() { return {}; },
+      async importer() { return 0; },
+      async sante() { return true; },
+    };
+    const app = demarrer({
+      document: doc,
+      location: fausseAdresse(`${UI}${lienDe(topic, key)}`),
+      fabriqueSalon: () => fauxSalon,
+      minuteur: fauxMinuteur(),
+      now: () => 5_000_000_000_000,
+    });
+    apps.push(app);
+    await app.pret;
+
+    assert.equal(attaches.avantDemarrer.identite, 1,
+      'le listener #identite doit être posé avant `salon.demarrer`');
+    assert.equal(attaches.avantDemarrer.ecriture, 1,
+      'le listener #zone-ecriture doit être posé avant `salon.demarrer`');
+  });
+});
+
 describe('page — mode observateur (AC-06)', () => {
   test('avec « ro=1 », le fil s\'affiche mais aucune zone d\'écriture n\'est montée', async () => {
     const topic = generateTopic();
@@ -294,6 +347,165 @@ describe('page — au-delà du TTL (AC-10)', () => {
     assert.equal(doc.getElementById('identite').hidden, true);
     assert.match(doc.getElementById('avis-salon').textContent, /expirée/i);
     assert.equal(doc.getElementById('ttl-restant').textContent, 'expirée');
+  });
+});
+
+describe('page — le fil suit le dernier message (D-05, AC-06)', () => {
+  // La recette visuelle a ouvert un salon de quatorze messages : `scrollY`
+  // valait 0. Le fil s'affiche « en direct » mais le lecteur voit le plus
+  // ancien et doit descendre à la main — donc, sur un téléphone, il ne voit
+  // rien du tout, le composeur occupant le bas de l'écran.
+
+  test('un message qui arrive amène le fil jusqu\'à lui', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const { doc } = await monter(lienDe(topic, key));
+    doc.getElementById('nom-champ').value = 'alice';
+    await doc.getElementById('identite').declencher('submit');
+    doc.getElementById('saisie').value = 'le dernier mot';
+    await doc.getElementById('zone-ecriture').declencher('submit');
+
+    await attendre(() => doc.getElementById('fil').children.some((li) => li.texteRendu.includes('le dernier mot')));
+    const fil = doc.getElementById('fil').children;
+    const dernier = fil[fil.length - 1];
+    assert.equal(dernier.texteRendu.includes('le dernier mot'), true);
+    assert.ok(dernier.defilements > 0, 'le fil n\'a pas suivi le message qui vient d\'arriver');
+  });
+
+  test('un lecteur remonté dans l\'historique n\'est pas ramené en bas de force', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const { doc } = await monter(lienDe(topic, key), {
+      defilement: { auBas: () => false, vers: (el) => el.scrollIntoView() },
+    });
+    doc.getElementById('nom-champ').value = 'alice';
+    await doc.getElementById('identite').declencher('submit');
+    doc.getElementById('saisie').value = 'pendant qu\'il lit plus haut';
+    await doc.getElementById('zone-ecriture').declencher('submit');
+
+    await attendre(() => doc.getElementById('fil').children.some((li) => li.texteRendu.includes('plus haut')));
+    const fil = doc.getElementById('fil').children;
+    assert.equal(fil[fil.length - 1].defilements, 0, 'la lecture de l\'historique a été interrompue');
+  });
+});
+
+describe('fenêtre — le fil suit le lecteur, pas la hauteur de la page (D-05)', () => {
+  /** Une fenêtre dont on peut déclencher le défilement à la main. */
+  function fausseFenetre(documentElement = { scrollHeight: 2000, scrollTop: 0, clientHeight: 800 }) {
+    const ecouteurs = [];
+    const fenetre = { addEventListener: (type, fn) => { if (type === 'scroll') ecouteurs.push(fn); } };
+    const port = defilementDeLaFenetre({ documentElement }, fenetre);
+    return {
+      port,
+      documentElement,
+      /** Le lecteur (ou nous) déplace la page, puis le navigateur prévient. */
+      defilerA(haut) { documentElement.scrollTop = haut; for (const fn of ecouteurs) fn(); },
+    };
+  }
+
+  test('au départ, le fil suit', () => {
+    assert.equal(fausseFenetre().port.auBas(), true);
+  });
+
+  test('une rafale de messages ne fait pas décrocher le fil : la page grandit, le lecteur n\'a rien fait', () => {
+    const f = fausseFenetre({ scrollHeight: 900, scrollTop: 0, clientHeight: 800 });
+    // C'est le piège que la recette a révélé : mesurer la distance au bas
+    // aurait fait décrocher dès le sixième message, sans un geste du lecteur.
+    for (const hauteur of [1000, 1200, 1500, 2000]) {
+      f.documentElement.scrollHeight = hauteur;
+      assert.equal(f.port.auBas(), true, `décroché à ${hauteur} px de page`);
+    }
+  });
+
+  test('le lecteur remonte : le fil cesse de suivre', () => {
+    const f = fausseFenetre();
+    f.defilerA(1200);
+    f.defilerA(400);
+    assert.equal(f.port.auBas(), false);
+  });
+
+  test('le lecteur redescend au bas : le fil reprend', () => {
+    const f = fausseFenetre();
+    f.defilerA(1200);
+    f.defilerA(400);
+    assert.equal(f.port.auBas(), false, 'remonté : le fil doit le laisser lire');
+    f.defilerA(1200);
+    assert.equal(f.port.auBas(), true, '2000 − 1200 − 800 = 0 : il est revenu en bas');
+  });
+
+  test('descendre sans atteindre le bas ne fait pas décrocher : le lecteur va vers le neuf', () => {
+    const f = fausseFenetre();
+    f.defilerA(400);
+    assert.equal(f.port.auBas(), true);
+  });
+
+  test('notre propre défilement va vers le bas : il ne se prend pas pour un geste du lecteur', () => {
+    const f = fausseFenetre();
+    for (const haut of [200, 600, 1200]) f.defilerA(haut);
+    assert.equal(f.port.auBas(), true);
+  });
+
+  test('sans mesure possible, le fil suit : ne rien voir arriver est le pire des cas', () => {
+    assert.equal(defilementDeLaFenetre(undefined, null).auBas(), true);
+    assert.equal(defilementDeLaFenetre({}, null).auBas(), true);
+  });
+});
+
+describe('page — santé du bus depuis l\'accueil (AC-13)', () => {
+  // La recette visuelle a trouvé l'accueil bloqué sur « bus : vérification… » :
+  // l'indicateur ne sortait de son état initial que dans le salon, alors que
+  // AC-13 demande que la santé du bus soit visible **depuis l'interface**.
+  // C'est aussi le seul écran où l'on choisit son bus : c'est là qu'il faut
+  // savoir s'il répond, avant de créer une session sur un bus muet.
+  const versLeFaux = (url, ...reste) => fetch(String(url).replace('https://ntfy.sh', bus.base), ...reste);
+
+  test('à l\'ouverture de l\'accueil, l\'indicateur ne reste pas sur « vérification »', async () => {
+    const { doc } = await monter('', { fetchImpl: versLeFaux });
+    assert.equal(doc.getElementById('sante').dataset.etat, 'vert');
+    assert.match(doc.getElementById('sante-texte').textContent, /en service/);
+  });
+
+  test('un bus muet met l\'indicateur au rouge, avec la raison', async () => {
+    bus.healthy = false;
+    try {
+      const { doc } = await monter('', { fetchImpl: versLeFaux });
+      assert.equal(doc.getElementById('sante').dataset.etat, 'rouge');
+      assert.match(doc.getElementById('sante-texte').textContent, /indisponible/);
+    } finally {
+      bus.healthy = true;
+    }
+  });
+
+  test('changer de bus dans le champ ré-interroge celui-là', async () => {
+    const { app, doc } = await monter('', { fetchImpl: versLeFaux });
+    doc.getElementById('creer-serveur').value = 'http://127.0.0.1:9';
+    await doc.getElementById('creer-serveur').declencher('change');
+    assert.equal(doc.getElementById('sante').dataset.etat, 'rouge');
+    assert.equal(app.vue, 'accueil');
+  });
+
+  test('un bus que la politique de sécurité refuse n\'est pas interrogé du tout', async () => {
+    let appels = 0;
+    const compter = (...a) => { appels += 1; return versLeFaux(...a); };
+    const { doc } = await monter('', { fetchImpl: compter });
+    const avant = appels;
+    doc.getElementById('creer-serveur').value = 'https://bus.ailleurs.exemple';
+    await doc.getElementById('creer-serveur').declencher('change');
+
+    assert.equal(appels, avant, 'une requête est partie vers un bus que la CSP bloquerait');
+    assert.equal(doc.getElementById('sante').dataset.etat, 'rouge');
+    assert.match(doc.getElementById('sante-texte').textContent, /politique de sécurité/i);
+  });
+
+  test('l\'indicateur est rafraîchi périodiquement, sur l\'accueil comme dans le salon', async () => {
+    const { doc, minuteur } = await monter('', { fetchImpl: versLeFaux });
+    bus.healthy = false;
+    try {
+      await minuteur.battre();
+      assert.equal(doc.getElementById('sante').dataset.etat, 'rouge');
+    } finally {
+      bus.healthy = true;
+    }
   });
 });
 
@@ -372,6 +584,34 @@ describe('page — accueil et création (AC-01, §2.3)', () => {
     assert.equal(copies.length, 2);
     assert.equal(copies[0], doc.getElementById('lien-participant').value);
     assert.match(copies[1], /&ro=1$/);
+  });
+
+  test('le nom saisi à l\'accueil est mémorisé pour que le salon ne le redemande pas', async () => {
+    const stockage = new Map();
+    const memoire = {
+      lire: (c) => stockage.get(c) ?? null,
+      ecrire: (c, v) => stockage.set(c, v),
+    };
+    const { doc } = await monter('', {
+      memoire,
+      location: fausseAdresse(`${bus.base}/chat/`),
+    });
+    doc.getElementById('creer-nom').value = 'alice';
+    doc.getElementById('creer-serveur').value = bus.base;
+    await doc.getElementById('creer-form').declencher('submit');
+
+    assert.equal(stockage.get('nom'), 'alice',
+      'le nom du créateur doit être mémorisé avant l\'ouverture du salon');
+
+    // Le lien participant, ouvert dans un contexte qui partage la mémoire,
+    // ne doit pas rebasculer sur l'écran d'identité.
+    const hash = doc.getElementById('lien-participant').value.split('#')[1];
+    const salon = await monter(`#${hash}`, { memoire });
+    assert.equal(salon.doc.getElementById('identite').hidden, true,
+      'l\'écran d\'identité ne doit pas ré-apparaître');
+    assert.equal(salon.doc.getElementById('zone-ecriture').hidden, false,
+      'la zone d\'écriture doit être ouverte d\'entrée');
+    assert.equal(salon.doc.getElementById('nom-participant').textContent, 'alice');
   });
 });
 

@@ -26,6 +26,9 @@
   --rayon: 10px;
   --espace: 0.75rem;
   --largeur-lisible: 46rem;
+  /* Hauteur réservée sous le fil : la zone d'écriture est collée en bas, et un
+     message amené « en bas » doit s'arrêter au-dessus d'elle, pas dessous. */
+  --barre-ecriture: 8.5rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -112,7 +115,13 @@ h3 { font-size: 1rem; margin: 0 0 0.5rem; }
 /* ------------------------------------------------------------ formulaires */
 
 label { display: block; margin-top: 0.6rem; font-size: 0.9rem; color: var(--texte-doux); }
-label.ligne { display: flex; }
+/* Une case à cocher ne quitte jamais la ligne de son libellé : c'est le texte
+   qui se replie (`nowrap` + `min-width: 0`), jamais la case qui se décroche.
+   Sans cela, `flex-wrap` renvoyait le libellé à la ligne suivante et la case
+   restait seule au-dessus, centrée, sans lien visible avec lui. */
+label.ligne { display: flex; flex-wrap: nowrap; align-items: center; }
+label.ligne > input[type="checkbox"] { flex: 0 0 auto; }
+label.ligne > span { flex: 1 1 auto; min-width: 0; }
 
 input, select, button {
   font: inherit;
@@ -171,8 +180,35 @@ code { background: var(--fond-doux); padding: 0.1rem 0.3rem; border-radius: 5px;
 .qr img[hidden] { display: none; }
 .qr figcaption { margin-top: 0.25rem; }
 
-.zone-ecriture { position: sticky; bottom: 0; }
+/*
+ * La zone d'écriture est collée en bas de l'écran : elle se peint donc
+ * par-dessus le fil. Trois conséquences tenues ici :
+ *   — elle reste une **barre** (champ et bouton côte à côte, à toute largeur) ;
+ *     empilés, ils mangeaient le tiers d'un écran de téléphone ;
+ *   — elle passe au-dessus du fil, franchement, plutôt que de s'y confondre ;
+ *   — les messages gardent une marge de défilement plus haute qu'elle, sans
+ *     quoi le message amené en bas atterrit dessous et reste invisible.
+ */
+.zone-ecriture { position: sticky; bottom: 0; z-index: 2; }
 .zone-ecriture[hidden] { display: none; }
+.zone-ecriture .ligne { flex-direction: row; flex-wrap: nowrap; align-items: center; margin: 0; }
+/* `flex-basis: 0` et non `auto` : `auto` reprendrait le `width: 100 %` des
+   champs, et le bouton passerait à la ligne — la barre faisait alors 94 px de
+   haut pour une seule ligne de saisie. Le sélecteur porte `[type="text"]` pour
+   l'emporter sur la règle de même poids du média étroit, qui vient plus bas. */
+.zone-ecriture .ligne > input[type="text"] { flex: 1 1 0; min-width: 0; }
+.zone-ecriture .ligne > button { flex: 0 0 auto; width: auto; }
+.zone-ecriture .aide { margin: 0.35rem 0 0; }
+
+.message { scroll-margin-bottom: var(--barre-ecriture); }
+
+/*
+ * L'en-tête du salon reste une suite de couples « étiquette : valeur » et de
+ * boutons côte à côte. Empilé, il occupait la moitié d'un écran de 844 px :
+ * plus aucun message n'était lisible sans faire défiler.
+ */
+.entete-salon .ligne { flex-direction: row; flex-wrap: wrap; align-items: baseline; }
+.entete-salon .ligne > button { width: auto; }
 
 .pied { color: var(--texte-doux); font-size: 0.8rem; border-top: 1px solid var(--trait); padding-top: var(--espace); margin-top: var(--espace); }
 
@@ -183,7 +219,13 @@ code { background: var(--fond-doux); padding: 0.1rem 0.3rem; border-radius: 5px;
   body { padding: 0 0.5rem 2rem; }
   .barre { flex-direction: column; align-items: flex-start; gap: 0.25rem; }
   .ligne { flex-direction: column; align-items: stretch; }
+  /* En colonne, `flex-basis` ne dit plus la largeur mais la **hauteur** : sans
+     cette remise à zéro, un champ « de base 12rem » devient haut de 12 rem —
+     192 px pour une ligne de saisie. C'est ce que la recette visuelle a vu. */
+  .ligne > input[type="text"], .ligne > input[type="url"] { flex: 0 0 auto; }
   .ligne > button { width: 100%; }
+  /* Une case à cocher ne quitte jamais la ligne de son libellé. */
+  label.ligne { flex-direction: row; align-items: center; }
   .etat { margin-left: 0; }
 }
 

@@ -15,6 +15,27 @@ import { etatTtl, vueMessage, Roster } from './etat.js';
 
 export const TTL_DEFAUT_H = 24;
 
+/**
+ * Santé du bus, telle que l'indicateur de connexion l'affiche (AC-13).
+ *
+ * Hors de la classe : l'accueil doit pouvoir interroger un bus **avant** qu'un
+ * salon existe — c'est là qu'on le choisit, et c'est là qu'il faut savoir s'il
+ * répond. Une seule implémentation pour les deux écrans.
+ *
+ * @returns {Promise<{healthy:boolean, raison?:string}>} jamais une exception :
+ * un bus injoignable est un état à afficher, pas un incident à propager.
+ */
+export async function sonderSante({ base, fetchImpl = (...a) => fetch(...a) }) {
+  try {
+    const res = await fetchImpl(`${String(base).replace(/\/+$/, '')}/v1/health`);
+    if (!res.ok) return { healthy: false, raison: `réponse ${res.status}` };
+    const corps = await res.json();
+    return corps?.healthy === true ? { healthy: true } : { healthy: false, raison: 'bus en panne' };
+  } catch (err) {
+    return { healthy: false, raison: err.message };
+  }
+}
+
 export class Salon {
   #arret = null;
   #file = Promise.resolve();
@@ -171,15 +192,6 @@ export class Salon {
     return messages.length;
   }
 
-  /** Santé du bus, telle que l'indicateur de connexion l'affiche (AC-13). */
-  async sante() {
-    try {
-      const res = await this.fetchImpl(`${String(this.server).replace(/\/+$/, '')}/v1/health`);
-      if (!res.ok) return { healthy: false, raison: `réponse ${res.status}` };
-      const corps = await res.json();
-      return corps?.healthy === true ? { healthy: true } : { healthy: false, raison: 'bus en panne' };
-    } catch (err) {
-      return { healthy: false, raison: err.message };
-    }
-  }
+  /** Santé du bus de ce salon (AC-13). */
+  sante() { return sonderSante({ base: this.server, fetchImpl: this.fetchImpl }); }
 }
