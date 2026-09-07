@@ -8,7 +8,7 @@
 import { generateKey, generateTopic } from '../lib/crypto.js';
 import { buildSessionUrl, DEFAULT_NTFY_BASE } from '../lib/url.js';
 import { lireFragment, peutEcrire, etatTtl } from './etat.js';
-import { Salon } from './salon.js';
+import { Salon, sonderSante } from './salon.js';
 import { versSvg } from './qr.js';
 
 /** La politique de sécurité de la page ne laisse joindre que ces bus. */
@@ -37,6 +37,7 @@ export function demarrer(monde) {
     telecharger = null,
     lireFichier = null,
     memoire = null,
+    fetchImpl = (...a) => fetch(...a),
   } = monde;
 
   const $ = (id) => doc.getElementById(id);
@@ -126,18 +127,38 @@ export function demarrer(monde) {
     else if (expire) avis('Session expirée : lecture et export restent possibles, écriture refusée.');
   }
 
+  function afficherSante({ healthy, raison }) {
+    $('sante').dataset.etat = healthy ? 'vert' : 'rouge';
+    $('sante-texte').textContent = healthy ? 'bus : en service' : `bus : indisponible (${raison})`;
+  }
+
+  /**
+   * L'indicateur vaut pour les deux écrans (AC-13) : dans le salon c'est le bus
+   * du salon, à l'accueil celui que le champ propose de joindre — c'est là
+   * qu'on le choisit, donc c'est là qu'il faut savoir s'il répond, avant de
+   * créer une session sur un bus muet.
+   */
   async function rafraichirSante() {
-    if (!app.salon) return;
-    const s = await app.salon.sante();
-    const bloc = $('sante');
-    bloc.dataset.etat = s.healthy ? 'vert' : 'rouge';
-    $('sante-texte').textContent = s.healthy ? 'bus : en service' : `bus : indisponible (${s.raison})`;
+    if (app.salon) return afficherSante(await app.salon.sante());
+
+    const base = sansSlash($('creer-serveur').value?.trim() || DEFAULT_NTFY_BASE);
+    // Interroger un bus que la politique de sécurité bloquera ne dirait rien de
+    // sa santé et laisserait une erreur réseau dans la console : on l'annonce
+    // plutôt que de l'essayer. Aucune requête n'est encore partie vers ce bus,
+    // contrairement au salon, qui y est déjà abonné.
+    if (!busAutorise(base, adresse.origin)) {
+      $('sante').dataset.etat = 'rouge';
+      $('sante-texte').textContent = `bus : ${base} — refusé par la politique de sécurité de cette page`;
+      return;
+    }
+    return afficherSante(await sonderSante({ base, fetchImpl }));
   }
 
   // ----------------------------------------------------------- accueil
 
-  function preparerAccueil() {
+  async function preparerAccueil() {
     montrer('accueil');
+    $('creer-serveur').addEventListener('change', () => { app.pretSante = rafraichirSante(); });
     $('creer-form').addEventListener('submit', async (ev) => {
       ev.preventDefault?.();
       const nom = $('creer-nom').value.trim();
@@ -179,6 +200,12 @@ export function demarrer(monde) {
       adresse.href = app.lienCree;
       adresse.reload?.();
     });
+
+    // Les écouteurs d'abord, l'attente ensuite : la page est déjà visible
+    // pendant que le bus répond, et un formulaire soumis dans cette fenêtre
+    // doit trouver son gestionnaire.
+    await rafraichirSante();
+    app.battement = minuteur.repeter(rafraichirSante, RAFRAICHIR_TTL_MS);
   }
 
   /**
@@ -290,7 +317,7 @@ export function demarrer(monde) {
   const lecture = lireFragment(adresse.hash);
   app.lecture = lecture;
   if (lecture.ok) app.pret = preparerSalon(lecture);
-  else if (lecture.raison === 'accueil') { preparerAccueil(); app.pret = Promise.resolve(); }
+  else if (lecture.raison === 'accueil') app.pret = preparerAccueil();
   else { preparerErreur(lecture); app.pret = Promise.resolve(); }
 
   app.arreter = () => {

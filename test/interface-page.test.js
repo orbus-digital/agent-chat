@@ -350,6 +350,64 @@ describe('page — au-delà du TTL (AC-10)', () => {
   });
 });
 
+describe('page — santé du bus depuis l\'accueil (AC-13)', () => {
+  // La recette visuelle a trouvé l'accueil bloqué sur « bus : vérification… » :
+  // l'indicateur ne sortait de son état initial que dans le salon, alors que
+  // AC-13 demande que la santé du bus soit visible **depuis l'interface**.
+  // C'est aussi le seul écran où l'on choisit son bus : c'est là qu'il faut
+  // savoir s'il répond, avant de créer une session sur un bus muet.
+  const versLeFaux = (url, ...reste) => fetch(String(url).replace('https://ntfy.sh', bus.base), ...reste);
+
+  test('à l\'ouverture de l\'accueil, l\'indicateur ne reste pas sur « vérification »', async () => {
+    const { doc } = await monter('', { fetchImpl: versLeFaux });
+    assert.equal(doc.getElementById('sante').dataset.etat, 'vert');
+    assert.match(doc.getElementById('sante-texte').textContent, /en service/);
+  });
+
+  test('un bus muet met l\'indicateur au rouge, avec la raison', async () => {
+    bus.healthy = false;
+    try {
+      const { doc } = await monter('', { fetchImpl: versLeFaux });
+      assert.equal(doc.getElementById('sante').dataset.etat, 'rouge');
+      assert.match(doc.getElementById('sante-texte').textContent, /indisponible/);
+    } finally {
+      bus.healthy = true;
+    }
+  });
+
+  test('changer de bus dans le champ ré-interroge celui-là', async () => {
+    const { app, doc } = await monter('', { fetchImpl: versLeFaux });
+    doc.getElementById('creer-serveur').value = 'http://127.0.0.1:9';
+    await doc.getElementById('creer-serveur').declencher('change');
+    assert.equal(doc.getElementById('sante').dataset.etat, 'rouge');
+    assert.equal(app.vue, 'accueil');
+  });
+
+  test('un bus que la politique de sécurité refuse n\'est pas interrogé du tout', async () => {
+    let appels = 0;
+    const compter = (...a) => { appels += 1; return versLeFaux(...a); };
+    const { doc } = await monter('', { fetchImpl: compter });
+    const avant = appels;
+    doc.getElementById('creer-serveur').value = 'https://bus.ailleurs.exemple';
+    await doc.getElementById('creer-serveur').declencher('change');
+
+    assert.equal(appels, avant, 'une requête est partie vers un bus que la CSP bloquerait');
+    assert.equal(doc.getElementById('sante').dataset.etat, 'rouge');
+    assert.match(doc.getElementById('sante-texte').textContent, /politique de sécurité/i);
+  });
+
+  test('l\'indicateur est rafraîchi périodiquement, sur l\'accueil comme dans le salon', async () => {
+    const { doc, minuteur } = await monter('', { fetchImpl: versLeFaux });
+    bus.healthy = false;
+    try {
+      await minuteur.battre();
+      assert.equal(doc.getElementById('sante').dataset.etat, 'rouge');
+    } finally {
+      bus.healthy = true;
+    }
+  });
+});
+
 describe('page — accueil et création (AC-01, §2.3)', () => {
   test('créer une session imprime un lien participant et un lien observateur', async () => {
     const { doc } = await monter('', { location: fausseAdresse(`${bus.base}/chat/`) });
