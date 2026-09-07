@@ -211,20 +211,10 @@ export function demarrer(monde) {
     const salon = fabriqueSalon({ topic, key, server, ro, participant: app.participant, now });
     app.salon = salon;
 
-    $('etat-connexion').textContent = 'connexion…';
-    await salon.demarrer({
-      onMessage: (v) => { ajouterMessage(v); rafraichirEntete(); },
-      onRoster: () => rafraichirEntete(),
-      onEtat: ({ connecte, raison }) => {
-        $('etat-connexion').textContent = connecte ? 'en direct' : `hors ligne — ${raison ?? 'reprise…'}`;
-      },
-      onMigration: (nouveau) => avis(`La session a migré vers ${nouveau} : le fil continue ici.`),
-    });
-
-    rafraichirEntete();
-    await rafraichirSante();
-    app.battement = minuteur.repeter(() => { rafraichirEntete(); rafraichirSante(); }, RAFRAICHIR_TTL_MS);
-
+    // Les listeners sont posés AVANT le premier `await` : sans cela, la page
+    // reste visible pendant que la connexion se noue, et une soumission
+    // pressée serait suivie de la navigation par défaut (bloquée par la CSP
+    // form-action, donc muette) plutôt que du gestionnaire.
     $('identite').addEventListener('submit', (ev) => {
       ev.preventDefault?.();
       const nom = $('nom-champ').value.trim();
@@ -268,6 +258,20 @@ export function demarrer(monde) {
         avis(`Export illisible : ${err.message}`);
       }
     });
+
+    $('etat-connexion').textContent = 'connexion…';
+    await salon.demarrer({
+      onMessage: (v) => { ajouterMessage(v); rafraichirEntete(); },
+      onRoster: () => rafraichirEntete(),
+      onEtat: ({ connecte, raison }) => {
+        $('etat-connexion').textContent = connecte ? 'en direct' : `hors ligne — ${raison ?? 'reprise…'}`;
+      },
+      onMigration: (nouveau) => avis(`La session a migré vers ${nouveau} : le fil continue ici.`),
+    });
+
+    rafraichirEntete();
+    await rafraichirSante();
+    app.battement = minuteur.repeter(() => { rafraichirEntete(); rafraichirSante(); }, RAFRAICHIR_TTL_MS);
   }
 
   // ------------------------------------------------------------ erreur

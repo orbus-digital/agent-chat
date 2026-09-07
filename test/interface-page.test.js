@@ -253,6 +253,49 @@ describe('page — salon en direct (AC-06)', () => {
   });
 });
 
+describe('page — attaches d\'événements du salon', () => {
+  test('les listeners #identite et #zone-ecriture sont attachés avant tout `await`', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const doc = documentDeLaPage();
+    const attaches = { avantDemarrer: null };
+    const fauxSalon = {
+      topic, server: bus.base, ro: false, participant: null,
+      participants: [], ttl: { expire: false, resteLisible: '' }, ttlInconnu: true,
+      async demarrer(cbs) {
+        // Instant où l'application pourrait commencer à yielder — les listeners
+        // doivent déjà être posés, sinon une soumission arrivée pendant l'attente
+        // navigue à sa place et le nom se perd sans avertissement.
+        attaches.avantDemarrer = {
+          identite: (doc.getElementById('identite').ecouteurs.get('submit') ?? []).length,
+          ecriture: (doc.getElementById('zone-ecriture').ecouteurs.get('submit') ?? []).length,
+        };
+        cbs?.onEtat?.({ connecte: true });
+      },
+      arreter() {},
+      async annoncer() {},
+      async envoyer() {},
+      async exporter() { return {}; },
+      async importer() { return 0; },
+      async sante() { return true; },
+    };
+    const app = demarrer({
+      document: doc,
+      location: fausseAdresse(`${UI}${lienDe(topic, key)}`),
+      fabriqueSalon: () => fauxSalon,
+      minuteur: fauxMinuteur(),
+      now: () => 5_000_000_000_000,
+    });
+    apps.push(app);
+    await app.pret;
+
+    assert.equal(attaches.avantDemarrer.identite, 1,
+      'le listener #identite doit être posé avant `salon.demarrer`');
+    assert.equal(attaches.avantDemarrer.ecriture, 1,
+      'le listener #zone-ecriture doit être posé avant `salon.demarrer`');
+  });
+});
+
 describe('page — mode observateur (AC-06)', () => {
   test('avec « ro=1 », le fil s\'affiche mais aucune zone d\'écriture n\'est montée', async () => {
     const topic = generateTopic();
