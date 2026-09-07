@@ -23,7 +23,7 @@ import { generateKey, generateTopic } from '../lib/crypto.js';
 import { buildSessionUrl } from '../lib/url.js';
 import { encodeB64u } from '../lib/bytes.js';
 import { Salon } from '../web/js/salon.js';
-import { demarrer, busAutorise, BUS_AUTORISES } from '../web/js/app.js';
+import { demarrer, busAutorise, BUS_AUTORISES, defilementDeLaFenetre } from '../web/js/app.js';
 import { versSvg } from '../web/js/qr.js';
 
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -347,6 +347,66 @@ describe('page — au-delà du TTL (AC-10)', () => {
     assert.equal(doc.getElementById('identite').hidden, true);
     assert.match(doc.getElementById('avis-salon').textContent, /expirée/i);
     assert.equal(doc.getElementById('ttl-restant').textContent, 'expirée');
+  });
+});
+
+describe('page — le fil suit le dernier message (D-05, AC-06)', () => {
+  // La recette visuelle a ouvert un salon de quatorze messages : `scrollY`
+  // valait 0. Le fil s'affiche « en direct » mais le lecteur voit le plus
+  // ancien et doit descendre à la main — donc, sur un téléphone, il ne voit
+  // rien du tout, le composeur occupant le bas de l'écran.
+
+  test('un message qui arrive amène le fil jusqu\'à lui', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const { doc } = await monter(lienDe(topic, key));
+    doc.getElementById('nom-champ').value = 'alice';
+    await doc.getElementById('identite').declencher('submit');
+    doc.getElementById('saisie').value = 'le dernier mot';
+    await doc.getElementById('zone-ecriture').declencher('submit');
+
+    await attendre(() => doc.getElementById('fil').children.some((li) => li.texteRendu.includes('le dernier mot')));
+    const fil = doc.getElementById('fil').children;
+    const dernier = fil[fil.length - 1];
+    assert.equal(dernier.texteRendu.includes('le dernier mot'), true);
+    assert.ok(dernier.defilements > 0, 'le fil n\'a pas suivi le message qui vient d\'arriver');
+  });
+
+  test('un lecteur remonté dans l\'historique n\'est pas ramené en bas de force', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const { doc } = await monter(lienDe(topic, key), {
+      defilement: { auBas: () => false, vers: (el) => el.scrollIntoView() },
+    });
+    doc.getElementById('nom-champ').value = 'alice';
+    await doc.getElementById('identite').declencher('submit');
+    doc.getElementById('saisie').value = 'pendant qu\'il lit plus haut';
+    await doc.getElementById('zone-ecriture').declencher('submit');
+
+    await attendre(() => doc.getElementById('fil').children.some((li) => li.texteRendu.includes('plus haut')));
+    const fil = doc.getElementById('fil').children;
+    assert.equal(fil[fil.length - 1].defilements, 0, 'la lecture de l\'historique a été interrompue');
+  });
+});
+
+describe('fenêtre — savoir si le lecteur est en bas du fil (D-05)', () => {
+  const fenetre = (documentElement) => defilementDeLaFenetre({ documentElement });
+
+  test('collé en bas : le fil suit', () => {
+    assert.equal(fenetre({ scrollHeight: 2000, scrollTop: 1200, clientHeight: 800 }).auBas(), true);
+  });
+
+  test('à quelques pixels du bas : le fil suit encore', () => {
+    assert.equal(fenetre({ scrollHeight: 2000, scrollTop: 1120, clientHeight: 800 }).auBas(), true);
+  });
+
+  test('remonté dans l\'historique : le fil ne bouge pas', () => {
+    assert.equal(fenetre({ scrollHeight: 2000, scrollTop: 200, clientHeight: 800 }).auBas(), false);
+  });
+
+  test('sans mesure possible, le fil suit : ne rien voir arriver est le pire des cas', () => {
+    assert.equal(fenetre(undefined).auBas(), true);
+    assert.equal(fenetre({}).auBas(), true);
   });
 });
 

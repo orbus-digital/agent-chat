@@ -17,6 +17,29 @@ const RAFRAICHIR_TTL_MS = 30_000;
 
 const sansSlash = (s) => String(s).replace(/\/+$/, '');
 
+/** En deçà de cette distance du bas, le lecteur est réputé suivre le direct. */
+export const MARGE_BAS_PX = 120;
+
+/**
+ * Le fil suit le dernier message — sauf si le lecteur est remonté lire.
+ *
+ * La mesure est prise **avant** d'ajouter le message : après, la hauteur a
+ * changé et personne n'est plus « en bas ». Sans mesure possible, on suit :
+ * ne pas voir arriver un message est pire que d'être ramené en bas.
+ *
+ * @param {{documentElement?:{scrollHeight:number, scrollTop:number, clientHeight:number}}} doc
+ */
+export function defilementDeLaFenetre(doc, marge = MARGE_BAS_PX) {
+  return {
+    auBas: () => {
+      const d = doc?.documentElement;
+      if (!d || !Number.isFinite(d.scrollHeight) || !Number.isFinite(d.clientHeight)) return true;
+      return d.scrollHeight - (d.scrollTop ?? 0) - d.clientHeight <= marge;
+    },
+    vers: (el) => el?.scrollIntoView?.({ block: 'end' }),
+  };
+}
+
 export function busAutorise(url, origine = null) {
   const propre = sansSlash(url);
   return BUS_AUTORISES.includes(propre) || (origine !== null && propre === sansSlash(origine));
@@ -38,6 +61,7 @@ export function demarrer(monde) {
     lireFichier = null,
     memoire = null,
     fetchImpl = (...a) => fetch(...a),
+    defilement = defilementDeLaFenetre(doc),
   } = monde;
 
   const $ = (id) => doc.getElementById(id);
@@ -96,7 +120,12 @@ export function demarrer(monde) {
 
     li.append(entete);
     li.append(corps);
+
+    // Mesuré avant l'ajout : après, la hauteur a changé et plus personne n'est
+    // « en bas ». Un fil qui s'affiche en direct doit montrer ce qui arrive.
+    const suivre = defilement.auBas();
     $('fil').append(li);
+    if (suivre) defilement.vers(li);
     return li;
   }
 
