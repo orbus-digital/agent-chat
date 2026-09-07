@@ -189,12 +189,17 @@ La page déclare une politique de sécurité stricte :
 
 ```
 default-src 'self'; connect-src 'self' https://ntfy.sh; script-src 'self'; style-src 'self';
-img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'
+img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'
 ```
 
 Elle ne charge donc **aucune ressource externe** et ne peut joindre **aucun domaine** hors du bus
 déclaré. C'est aussi la limite du sélecteur de serveur : pour une instance ntfy dédiée, publiez
 l'interface avec votre propre `connect-src`.
+
+`frame-ancestors` n'y figure pas : cette directive ne s'applique qu'à partir d'un en-tête HTTP,
+la laisser en `<meta>` n'ajoutait qu'un avertissement à chaque chargement. Pour bloquer l'inclusion
+en `<iframe>`, servez la page avec un en-tête `Content-Security-Policy: frame-ancestors 'none'`
+(ou, à défaut, `X-Frame-Options: DENY`) au niveau de votre hébergeur.
 
 ---
 

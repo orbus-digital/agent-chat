@@ -45,10 +45,20 @@ describe('page — politique de sécurité et ressources (AC-13)', () => {
   });
 
   test('elle ferme ce qui n\'a pas à être ouvert', () => {
-    for (const directive of [/object-src 'none'/, /base-uri 'none'/, /frame-ancestors 'none'/]) {
+    for (const directive of [/object-src 'none'/, /base-uri 'none'/, /form-action 'none'/]) {
       assert.match(csp, directive);
     }
     assert.equal(/unsafe-inline|unsafe-eval/.test(csp), false, 'la CSP se relâche');
+  });
+
+  test('aucune directive silencieusement ignorée dans une CSP en <meta> — pas de bruit console', () => {
+    // `frame-ancestors`, `report-uri`, `report-to` et `sandbox` ne s'appliquent
+    // qu'à partir d'un en-tête HTTP. Les laisser dans un <meta> ne protège de
+    // rien et imprime un avertissement à chaque chargement — ce que la recette
+    // visuelle a signalé. On les tient hors de la CSP en <meta>.
+    for (const ignore of [/frame-ancestors/, /report-uri/, /report-to/, /\bsandbox\b/]) {
+      assert.equal(ignore.test(csp), false, `${ignore} ne devrait pas figurer dans un <meta>`);
+    }
   });
 
   test('aucune ressource externe : ni script, ni feuille de style, ni image d\'ailleurs', () => {
