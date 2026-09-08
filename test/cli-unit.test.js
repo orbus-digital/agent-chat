@@ -41,6 +41,10 @@ async function lancer(argv, extra = {}) {
     now: () => horloge,
     sleep: async () => {},
     uiBase: UI,
+    // Le faux ntfy est en http:// sur la boucle locale : toutes ces commandes
+    // s'exécutent donc dans un contexte de mise au point consenti. Le refus,
+    // lui, est éprouvé dans `serveur.test.js`, sans ce consentement.
+    allowInsecure: true,
     ...extra,
   });
   return { code, out, err, stdout: out.join('\n'), stderr: err.join('\n') };
@@ -85,7 +89,7 @@ describe('cli — une durée de vie ne s\'invente pas (D-09, R4)', () => {
     // session créée pour 2 h devenait une session de 24 h pour tout le monde.
     const topic = generateTopic();
     const key = generateKey();
-    const url = buildSessionUrl({ topic, key, server: bus.base, uiBase: UI });
+    const url = buildSessionUrl({ topic, key, server: bus.base, uiBase: UI, allowInsecure: true });
 
     const r = await lancer(['join', url, '--as', 'B']);
     assert.equal(r.code, EXIT.OK);
@@ -132,7 +136,7 @@ describe('cli — une durée de vie ne s\'invente pas (D-09, R4)', () => {
   test('faute de durée de vie connue, le rejoignant peut tout de même écrire', async () => {
     const topic = generateTopic();
     const key = generateKey();
-    const url = buildSessionUrl({ topic, key, server: bus.base, uiBase: UI });
+    const url = buildSessionUrl({ topic, key, server: bus.base, uiBase: UI, allowInsecure: true });
     await lancer(['join', url, '--as', 'B']);
 
     // Ne rien savoir de la durée de vie n'est pas la même chose que la savoir

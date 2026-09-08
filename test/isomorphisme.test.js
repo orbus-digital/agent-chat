@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Les modules que le navigateur charge. `session.js` et `cli.js` sont, eux, légitimement propres à Node. */
-export const MODULES_ISOMORPHES = ['bytes.js', 'crypto.js', 'sign.js', 'url.js', 'protocol.js', 'ntfy.js', 'archive.js'];
+export const MODULES_ISOMORPHES = ['bytes.js', 'crypto.js', 'sign.js', 'serveur.js', 'url.js', 'protocol.js', 'ntfy.js', 'archive.js'];
 const MODULES_NODE = ['session.js', 'cli.js'];
 
 const lire = (f) => readFileSync(join(RACINE, 'lib', f), 'utf8');

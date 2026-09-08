@@ -109,7 +109,10 @@ async function attendreLeServeur(delai = 5000) {
 async function preparerSession(nbMessages) {
   const home = mkdtempSync(join(tmpdir(), 'agentchat-recette-'));
   const lignes = [];
-  const io = { stdout: (l) => lignes.push(l), stderr: () => {}, home, uiBase: BASE };
+  // La recette est par définition un contexte de mise au point : un bus local
+  // en clair y est acceptable (`--bus http://127.0.0.1:…`). La garde continue
+  // de refuser toute adresse distante en clair, option ou pas (ADR-002).
+  const io = { stdout: (l) => lignes.push(l), stderr: () => {}, home, uiBase: BASE, allowInsecure: true };
 
   if (await agentchat(['create', '--ttl', '2', '--as', 'agent-a', '--server', values.bus], io) !== 0) {
     throw new Error(`création impossible sur ${values.bus} — bus injoignable ?`);

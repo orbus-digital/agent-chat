@@ -10,6 +10,7 @@
 import { deriveWriteKey, IntegrityError } from '../lib/crypto.js';
 import { encodeMessage, decodeMessage, ReplayGuard } from '../lib/protocol.js';
 import { publish, subscribe, poll } from '../lib/ntfy.js';
+import { assertBaseTransport } from '../lib/serveur.js';
 import { buildExport, decodeExport } from '../lib/archive.js';
 import { etatTtl, vueMessage, Roster } from './etat.js';
 
@@ -27,7 +28,9 @@ export const TTL_DEFAUT_H = 24;
  */
 export async function sonderSante({ base, fetchImpl = (...a) => fetch(...a) }) {
   try {
-    const res = await fetchImpl(`${String(base).replace(/\/+$/, '')}/v1/health`);
+    // Même garde que le reste du transport : la sonde de santé est une requête
+    // comme une autre, et elle porte le nom du bus dans l'URL.
+    const res = await fetchImpl(`${assertBaseTransport(base)}/v1/health`);
     if (!res.ok) return { healthy: false, raison: `réponse ${res.status}` };
     const corps = await res.json();
     return corps?.healthy === true ? { healthy: true } : { healthy: false, raison: 'bus en panne' };

@@ -497,6 +497,35 @@ describe('page — santé du bus depuis l\'accueil (AC-13)', () => {
     assert.match(doc.getElementById('sante-texte').textContent, /politique de sécurité/i);
   });
 
+  test('une page servie en clair hors boucle locale ne propose pas son propre bus', async () => {
+    // Le trou que la liste blanche laissait ouvert : `busAutorise` accepte le
+    // bus de même origine que la page — ce qui, sur une page http:// publique,
+    // revenait à accepter un bus http:// public.
+    let appels = 0;
+    const { doc } = await monter('', {
+      location: fausseAdresse('http://chat.exemple.test/'),
+      fetchImpl: (...a) => { appels += 1; return versLeFaux(...a); },
+    });
+    const avant = appels; // la sonde du bus par défaut, au montage, est légitime
+    doc.getElementById('creer-serveur').value = 'http://chat.exemple.test';
+    await doc.getElementById('creer-serveur').declencher('change');
+
+    assert.equal(appels, avant, 'une requête est partie vers un bus en clair');
+    assert.equal(doc.getElementById('sante').dataset.etat, 'rouge');
+    assert.match(doc.getElementById('sante-texte').textContent, /http:\/\/ refusé/);
+  });
+
+  test('et elle refuse de créer une session dessus, en disant quoi écrire à la place', async () => {
+    const { doc } = await monter('', { location: fausseAdresse('http://chat.exemple.test/'), fetchImpl: versLeFaux });
+    doc.getElementById('creer-nom').value = 'alice';
+    doc.getElementById('creer-serveur').value = 'http://chat.exemple.test';
+    await doc.getElementById('creer-form').declencher('submit');
+
+    assert.equal(doc.getElementById('creer-resultat').hidden, true, 'aucune session ne doit être créée');
+    assert.match(doc.getElementById('aide-serveur').textContent, /http:\/\/ refusé/);
+    assert.match(doc.getElementById('aide-serveur').textContent, /https:\/\/chat\.exemple\.test/);
+  });
+
   test('l\'indicateur est rafraîchi périodiquement, sur l\'accueil comme dans le salon', async () => {
     const { doc, minuteur } = await monter('', { fetchImpl: versLeFaux });
     bus.healthy = false;
@@ -654,8 +683,11 @@ describe('page — accueil et création (AC-01, §2.3)', () => {
 
     // Le lien participant, ouvert dans un contexte qui partage la mémoire,
     // ne doit pas rebasculer sur l'écran d'identité.
+    // Rouvert depuis la même origine locale : un lien vers un bus en clair
+    // n'est utilisable que depuis une page elle-même servie en clair localement
+    // — un navigateur bloquerait de toute façon le contenu mixte.
     const hash = doc.getElementById('lien-participant').value.split('#')[1];
-    const salon = await monter(`#${hash}`, { memoire });
+    const salon = await monter(`#${hash}`, { memoire, location: fausseAdresse(`${bus.base}/chat/#${hash}`) });
     assert.equal(salon.doc.getElementById('identite').hidden, true,
       'l\'écran d\'identité ne doit pas ré-apparaître');
     assert.equal(salon.doc.getElementById('zone-ecriture').hidden, false,
@@ -699,13 +731,13 @@ describe('page — export et import (AC-09)', () => {
     const key = generateKey();
     // L'URL porte le bus de test : le CLI est un vrai processus, il ne doit
     // pas aller frapper le bus public.
-    const url = buildSessionUrl({ topic, key, server: bus.base, uiBase: UI });
+    const url = buildSessionUrl({ topic, key, server: bus.base, uiBase: UI, allowInsecure: true });
 
     // Le CLI, tel qu'un agent l'emploie : il rejoint, écrit, puis exporte.
     const home = mkdtempSync(join(tmpdir(), 'agentchat-pont-'));
     let archive;
     try {
-      const env = { ...process.env, HOME: home, AGENTCHAT_UI_BASE: UI };
+      const env = { ...process.env, HOME: home, AGENTCHAT_UI_BASE: UI, AGENTCHAT_ALLOW_INSECURE: '1' };
       const cli = (args) => execFileP(process.execPath, [join(RACINE, 'bin', 'agentchat.js'), ...args], { env, timeout: 15000 });
       await cli(['join', url, '--as', 'agent-cli']);
       await cli(['send', url, 'écrit par le CLI', '--as', 'agent-cli']);
