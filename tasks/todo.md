@@ -148,3 +148,116 @@ ouverte, comme les lots 1 et 2 de la V1 l'avaient été). Sa PR vise `dev`.
 
 `npm test` vert · `npm run recette` vert, **27 vérifications**, dont la lecture réelle du
 presse-papier du navigateur pour s'assurer que c'est bien le lien participant qui s'y trouve.
+
+---
+
+# Tâche : agent-chat-relay — imposer HTTPS sur le bus ntfy (LOT 3, sécurité)
+
+Unité ADLC `agent-chat-relay-c20260907-2348` · origine `review_finding` (suite **HR-20260907-003**) ·
+spec `specs/agent-chat-relay/spec.md` **V1.1** ·
+branche `feat/agent-chat-relay-c20260907-2348-lot3` depuis `dev`.
+
+## Objectif
+
+La revue de sécurité du LOT 2 a rendu un verdict `concerns` / MEDIUM avec **trois constats de même
+racine** : l'URL du bus ntfy est acceptée telle quelle, sans contrainte de schéma, en trois endroits
+(`--server` du CLI, paramètre `s` du lien de session, appels `fetch` du transport). Une URL `http://`
+y passe sans un mot, et le salon retombe en clair sans que personne ne l'ait décidé.
+
+Le chiffré ne fuite pas pour autant — AES-256-GCM tient — mais **les métadonnées, si** : `X-Title`
+(le nom de l'auteur) et `X-Tags` (le `kind`) voyagent en en-têtes HTTP, donc en clair sur le réseau,
+et l'identifiant de topic avec eux. C'est exactement ce que `--private-meta` sert à protéger : sur
+`http://`, l'option ne protège plus de rien vis-à-vis d'un observateur du réseau.
+
+Ce lot ferme les trois constats, et le seul FAIL de la revue DevOps (`.env.example` absent).
+
+## Ce que la revue a demandé
+
+- [x] **D-11 — Une seule garde de schéma, partagée.** `lib/url.js` expose `normaliseServeur(url, {allowInsecure})` :
+      `https://` accepté ; `http://` refusé avec un message qui dit quoi faire ; autre schéma ou
+      absence de schéma refusés. Un seul endroit décide, les trois autres l'appellent.
+- [x] **D-12 — Le lien de session ne peut pas porter d'URL en clair.** `buildSessionUrl` valide `server`
+      avant de l'encoder dans `&s=` : on ne fabrique pas un lien qui dégradera celui qui l'ouvrira.
+- [x] **D-13 — Un lien reçu ne peut pas nous faire retomber en clair.** `parseSessionUrl` valide le
+      `server` décodé de `&s=`. C'est le vecteur le plus sérieux : le lien vient d'un tiers.
+- [x] **D-14 — Le transport garde la porte.** `lib/ntfy.js` (`publish`, `poll`, `subscribe`/SSE) refuse
+      toute base qui n'est pas `https://`, sauf boucle locale. Défense en profondeur : c'est la seule
+      couche qui parle au réseau, elle ne doit pas dépendre du bon vouloir de ses appelants.
+- [x] **D-15 — `--allow-insecure`, réservée à la boucle locale.** Option de développement, documentée
+      dans l'aide et le README, appliquée à `--server` **et** à toute lecture d'URL de session.
+      `http://` hors `localhost`/`127.0.0.1`/`[::1]` reste refusé **même avec l'option**.
+- [x] **D-16 — `NTFY_BASE_URL` lu depuis l'environnement.** La spec §10 déclare cette variable ; le
+      code ne la lisait pas. Précédence : `--server` > `NTFY_BASE_URL` > défaut. Sans quoi le
+      `.env.example` de D-18 documenterait une variable que rien ne lit.
+- [x] **D-17 — L'interface tenue à la même règle.** `sonderSante` (web) passe par la garde partagée,
+      et le sélecteur de serveur de l'accueil refuse une saisie `http://` avec le même message.
+- [x] **D-18 — `.env.example` + README.** Variables documentées, **aucune valeur réelle** (R6).
+
+## Décisions de conception
+
+**Deux niveaux de sévérité, volontairement.** Le transport (`lib/ntfy.js`) applique l'invariant
+objectif — *jamais de clair vers le réseau* — et laisse passer `http://127.0.0.1` sans rien demander,
+parce qu'il ne peut pas connaître l'intention de son appelant et qu'un serveur de test local n'est pas
+une fuite. Le CLI et le lien de session appliquent la **politique**, plus stricte : `http://` exige un
+consentement explicite (`--allow-insecure`) *en plus* d'être sur la boucle locale. Un seul niveau
+n'aurait pas suffi : au niveau transport seul, un `--server http://localhost` passait en silence ;
+au niveau CLI seul, tout appelant du noyau contournait la garde.
+
+**Refuser plutôt que réécrire.** On ne transforme pas `http://` en `https://` en silence : l'URL
+appartient à l'utilisateur, et une réécriture muette produirait un échec réseau incompréhensible
+là où un refus explicite dit ce qui ne va pas.
+
+## Risques
+
+- Les tests existants (`acceptance`, `cli-unit`, `interface-*`) parlent tous à un faux ntfy en
+  `http://127.0.0.1:<port>`. Ils devront porter `--allow-insecure` — c'est le prix, et c'est aussi
+  la preuve que la garde mord.
+- `web/lib` est un lien symbolique vers `lib/` (noyau isomorphe) : la garde doit rester en WebCrypto
+  pur, sans `node:*` ni `Buffer`. `new URL()` est disponible des deux côtés.
+
+## Retour arrière
+
+`git revert` du commit de lot, ou `--allow-insecure` en attendant. Aucune migration, aucun état
+persistant modifié : les fichiers de session existants gardent leur champ `server` tel quel.
+
+## Vérification
+
+- `npm test` vert, couverture du noyau au-dessus du seuil AC-12.
+- `npm run recette` (scénario navigateur) vert, zéro erreur console.
+- `grep -rn "http://" lib/ web/js/` : aucune URL de bus en dur.
+
+## Notes de revue — LOT 3
+
+**Ce que la garde a réellement trouvé, une fois posée.** Un trou que la revue n'avait pas nommé :
+`busAutorise`, dans l'interface, accepte le bus **de même origine que la page**, pour permettre la
+recette locale. Sur une page servie en `http://` ailleurs que sur la boucle locale, cela revenait à
+accepter un bus `http://` public — la liste blanche disait oui, et rien d'autre ne regardait le
+schéma. C'est maintenant refusé, avec le message du noyau, et éprouvé
+(`test/interface-page.test.js`, « une page servie en clair hors boucle locale ne propose pas son
+propre bus »).
+
+**Ce que les tests ont coûté, et pourquoi c'est un gain.** Toute la suite parle à un faux ntfy en
+`http://127.0.0.1`. Plutôt que d'exempter les tests, ils portent `AGENTCHAT_ALLOW_INSECURE=1` —
+la même variable que celle documentée dans `.env.example`. La contrainte est donc *visible* dans le
+harnais au lieu d'être contournée, et le refus, lui, est éprouvé sans ce consentement dans
+`test/serveur.test.js`. Deux tests d'interface ont dû être remontés depuis l'origine locale : un
+lien vers un bus en clair n'est utilisable que depuis une page elle-même servie en clair localement
+— ce qu'un navigateur imposerait de toute façon par le blocage du contenu mixte.
+
+**`NTFY_BASE_URL` n'était pas lue.** La spec §10 la déclare depuis la V1 ; le code ne lisait que
+`AGENTCHAT_UI_BASE`. Écrire un `.env.example` qui la documente sans la faire lire aurait produit
+un fichier menteur : elle est donc branchée (précédence `--server` > `NTFY_BASE_URL` > défaut), et
+elle passe la même garde — une variable d'environnement n'est pas un blanc-seing.
+
+**Ce qui n'a pas été fait, et pourquoi.** Aucune tentative de mémoriser le consentement dans le
+fichier de session, bien que ce soit l'ergonomie évidente : `parseSessionUrl` a lieu **avant** que
+le topic soit connu, donc avant que la session locale puisse être chargée. Inverser cet ordre pour
+une commodité aurait coûté plus cher que la variable d'environnement, qui rend le même service.
+Détail dans ADR-002.
+
+**Vérifié.** `npm test` : 383 tests verts, `lib/serveur.js` à 100 % (et désormais sous seuil dans
+`scripts/run-tests.mjs` — une garde non couverte est une garde dont on ne sait pas si elle mord).
+`npm run recette` : Chromium réel contre l'interface servie, session créée avec le CLI sur le vrai
+`ntfy.sh`, 29 vérifications vertes, **zéro erreur console** (AC-13). Messages de refus relus à la
+main sur les six cas (distant, local, option sur distant, sans schéma, `NTFY_BASE_URL`, lien forgé) :
+code 2 partout, et chacun propose l'URL à écrire à la place.
