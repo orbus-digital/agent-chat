@@ -7,6 +7,7 @@
 
 import { generateKey, generateTopic } from '../lib/crypto.js';
 import { buildSessionUrl, DEFAULT_NTFY_BASE } from '../lib/url.js';
+import { normaliseServeur, origineDeDeveloppement } from '../lib/serveur.js';
 import { lireFragment, peutEcrire, etatTtl } from './etat.js';
 import { Salon, sonderSante } from './salon.js';
 import { versSvg } from './qr.js';
@@ -85,6 +86,34 @@ export function demarrer(monde) {
 
   const $ = (id) => doc.getElementById(id);
   const app = { salon: null, vue: null, participant: null };
+
+  // Une page servie en clair depuis la boucle locale, c'est la recette locale :
+  // un bus local en clair y est cohérent, et rien ne quitte la machine. Servie
+  // en https, la question ne se pose pas — le bus doit l'être aussi.
+  const enDeveloppement = origineDeDeveloppement(adresse?.origin);
+
+  /**
+   * Deux refus possibles pour un bus, et un seul endroit qui les rend : la
+   * politique de la page (CSP, liste blanche) et la politique de schéma du
+   * noyau (`serveur.js`). Ne rend jamais d'exception — un bus refusé est un
+   * état à afficher dans la page, pas un incident à propager.
+   *
+   * @returns {{ok:true, base:string}|{ok:false, message:string}}
+   */
+  function verifierBus(saisi) {
+    const base = sansSlash(saisi?.trim() || DEFAULT_NTFY_BASE);
+    if (!busAutorise(base, adresse?.origin ?? null)) {
+      return {
+        ok: false,
+        message: `Ce bus n'est pas joignable depuis cette page : la politique de sécurité n'autorise que ${BUS_AUTORISES.join(', ')}.`,
+      };
+    }
+    try {
+      return { ok: true, base: normaliseServeur(base, { allowInsecure: enDeveloppement }) };
+    } catch (err) {
+      return { ok: false, message: err.message };
+    }
+  }
 
   // ------------------------------------------------------------- rendu
 
@@ -189,17 +218,17 @@ export function demarrer(monde) {
   async function rafraichirSante() {
     if (app.salon) return afficherSante(await app.salon.sante());
 
-    const base = sansSlash($('creer-serveur').value?.trim() || DEFAULT_NTFY_BASE);
-    // Interroger un bus que la politique de sécurité bloquera ne dirait rien de
-    // sa santé et laisserait une erreur réseau dans la console : on l'annonce
-    // plutôt que de l'essayer. Aucune requête n'est encore partie vers ce bus,
-    // contrairement au salon, qui y est déjà abonné.
-    if (!busAutorise(base, adresse.origin)) {
+    // Interroger un bus que la politique bloquera ne dirait rien de sa santé et
+    // laisserait une erreur réseau dans la console : on l'annonce plutôt que de
+    // l'essayer. Aucune requête n'est encore partie vers ce bus, contrairement
+    // au salon, qui y est déjà abonné.
+    const verdict = verifierBus($('creer-serveur').value);
+    if (!verdict.ok) {
       $('sante').dataset.etat = 'rouge';
-      $('sante-texte').textContent = `bus : ${base} — refusé par la politique de sécurité de cette page`;
+      $('sante-texte').textContent = `bus : ${verdict.message}`;
       return;
     }
-    return afficherSante(await sonderSante({ base, fetchImpl }));
+    return afficherSante(await sonderSante({ base: verdict.base, fetchImpl }));
   }
 
   // ----------------------------------------------------------- accueil
@@ -211,13 +240,14 @@ export function demarrer(monde) {
       ev.preventDefault?.();
       const nom = $('creer-nom').value.trim();
       const ttlH = Number($('creer-ttl').value);
-      const serveur = sansSlash($('creer-serveur').value.trim() || DEFAULT_NTFY_BASE);
 
       if (!nom) return;
-      if (!busAutorise(serveur, adresse.origin)) {
-        $('aide-serveur').textContent = `Ce bus n'est pas joignable depuis cette page : la politique de sécurité n'autorise que ${BUS_AUTORISES.join(', ')}.`;
+      const verdict = verifierBus($('creer-serveur').value);
+      if (!verdict.ok) {
+        $('aide-serveur').textContent = verdict.message;
         return;
       }
+      const serveur = verdict.base;
 
       // On mémorise le nom du créateur : sans cela, l'ouverture du salon
       // rebasculerait sur l'écran d'identité, alors que le nom est déjà connu.
@@ -227,7 +257,7 @@ export function demarrer(monde) {
       const key = generateKey();
       const createdAt = now();
       const base = adresse.href.split('#')[0];
-      const lien = buildSessionUrl({ topic, key, server: serveur, uiBase: base });
+      const lien = buildSessionUrl({ topic, key, server: serveur, uiBase: base, allowInsecure: enDeveloppement });
 
       const salon = fabriqueSalon({ topic, key, server: serveur, participant: nom, privateMeta: $('creer-prive').checked });
       await salon.demarrer({ onMessage: () => {} });
@@ -381,7 +411,7 @@ export function demarrer(monde) {
 
   // ------------------------------------------------------------ départ
 
-  const lecture = lireFragment(adresse.hash);
+  const lecture = lireFragment(adresse.hash, { allowInsecure: enDeveloppement });
   app.lecture = lecture;
   if (lecture.ok) app.pret = preparerSalon(lecture);
   else if (lecture.raison === 'accueil') app.pret = preparerAccueil();

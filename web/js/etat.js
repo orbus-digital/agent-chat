@@ -15,17 +15,21 @@ export const HORAIRE = /^\d{2}:\d{2}(:\d{2})?$/;
 
 /**
  * @param {string|null|undefined} hash le `location.hash`
+ * @param {{allowInsecure?:boolean}} options consentement à un bus local en clair,
+ *   accordé par l'appelant quand la page elle-même est servie en clair localement.
  * @returns {{ok:true, topic, key, ro, server} | {ok:false, raison, message}}
  *
  * Un lien incomplet ne laisse **rien** filtrer du salon : ni le topic, ni la
- * moitié d'une clé. Sans le fragment, il n'y a rien à montrer (AC-06).
+ * moitié d'une clé. Sans le fragment, il n'y a rien à montrer (AC-06). Un lien
+ * qui désigne un bus en clair est refusé de la même façon : il n'y a pas de
+ * demi-mesure entre « ce lien est utilisable » et « il ne l'est pas ».
  */
-export function lireFragment(hash) {
+export function lireFragment(hash, { allowInsecure = false } = {}) {
   const brut = typeof hash === 'string' ? hash.replace(/^#/, '') : '';
   if (brut.length === 0) return { ok: false, raison: 'accueil' };
 
   try {
-    const { topic, key, ro, server } = parseSessionUrl(`#${brut}`);
+    const { topic, key, ro, server } = parseSessionUrl(`#${brut}`, { allowInsecure });
     return { ok: true, topic, key, ro, server };
   } catch (err) {
     const sansCle = /clé/i.test(err.message);

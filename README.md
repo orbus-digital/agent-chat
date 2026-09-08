@@ -115,6 +115,7 @@ Le même fichier se relit dans l'interface, bouton **Importer un export**.
 
 ```
 agentchat create  [--ttl H] [--as NOM] [--server URL] [--ui URL] [--private-meta]
+                  [--allow-insecure]
 agentchat join    <url> --as <NOM> [--private-meta]
 agentchat tail    <url> [--since all|last|<id>] [--once] [--no-follow]
 agentchat send    <url> "<texte>" [--kind text|control] [--as NOM] [--private-meta]
@@ -122,6 +123,8 @@ agentchat export  <url> [--since all|<id>]   > session.json
 agentchat replay  <fichier> [--url <url>]      (aucun réseau)
 agentchat migrate <url> [--as NOM]
 ```
+
+Toute option est aussi lisible dans `agentchat help`.
 
 **Codes de retour**, stables et faits pour être testés par un script :
 
@@ -142,8 +145,11 @@ agentchat tail "$URL" --once
 # reprendre exactement là où l'on s'était arrêté
 agentchat tail "$URL" --since last
 
-# une instance ntfy dédiée
+# une instance ntfy dédiée — en https://, la garde le vérifie
 agentchat create --server https://ntfy.exemple.org
+
+# un serveur ntfy de test, sur la machine seulement
+agentchat create --server http://127.0.0.1:8080 --allow-insecure
 
 # ne rien publier en clair, pas même les noms ni le type des messages
 agentchat create --private-meta
@@ -176,6 +182,42 @@ ignoré, un horodatage qui recule de plus de 60 s est signalé.
   préférez un TTL court.
 - **Un participant malveillant reste un participant.** Rien ici ne protège d'un membre du salon,
   ni d'un poste compromis.
+
+### Le bus doit être en `https://`
+
+Le CLI comme l'interface **refusent** une URL de bus en `http://`, et le disent :
+
+```
+$ agentchat create --server http://ntfy.exemple.org
+[agentchat] erreur UsageError : serveur ntfy « http://ntfy.exemple.org » : http:// refusé
+  — les en-têtes ntfy X-Title et X-Tags, et le nom du topic, voyageraient en clair.
+  Écrivez https://ntfy.exemple.org
+```
+
+Le chiffré resterait du chiffré sur `http://` — mais l'auteur, le type du message et le nom du
+salon, eux, seraient lisibles par quiconque observe le réseau, et `--private-meta` ne protégerait
+plus de rien vis-à-vis de cet observateur. Le refus vaut aux quatre endroits où une adresse de bus
+entre dans le programme : l'option `--server`, la variable `NTFY_BASE_URL`, le paramètre `s` d'un
+lien de session reçu, et l'appel réseau lui-même.
+
+Pour un serveur ntfy de test, `--allow-insecure` (ou `AGENTCHAT_ALLOW_INSECURE=1`) lève le refus
+**sur la boucle locale seulement** — `localhost`, `127.0.0.0/8`, `[::1]`. Une adresse distante en
+clair reste refusée avec l'option : ce n'est pas un interrupteur général.
+
+---
+
+## Configuration
+
+Aucune de ces variables ne porte de secret — ce client n'a ni compte ni jeton. La clé de session
+ne vit que dans le fragment de l'URL et dans `~/.agentchat/<topic>.json` (mode 600).
+
+| Variable | Rôle | Défaut |
+|---|---|---|
+| `NTFY_BASE_URL` | bus utilisé quand `--server` n'est pas donné | `https://ntfy.sh` |
+| `AGENTCHAT_UI_BASE` | base des liens imprimés par `create` et `migrate` | l'interface publiée |
+| `AGENTCHAT_ALLOW_INSECURE` | `1` pour accepter un bus local en clair (mise au point) | vide |
+
+Le modèle commenté est dans [`.env.example`](.env.example) ; `.env` est ignoré par git.
 
 ---
 
@@ -214,14 +256,16 @@ en `<iframe>`, servez la page avec un en-tête `Content-Security-Policy: frame-a
 
 ```
 bin/            point d'entrée du CLI
-lib/            noyau partagé : bytes, crypto, sign, url, protocol, ntfy, archive
-                (+ session et cli, propres à Node)
+lib/            noyau partagé : bytes, crypto, sign, serveur, url, protocol, ntfy,
+                archive (+ session et cli, propres à Node)
+lib/serveur.js  la garde de schéma du bus : où se décide « https:// ou rien »
 web/            interface publiée par GitHub Pages
 web/lib   ->    lien symbolique vers lib/ : une seule copie du noyau
 web/js/qr.js    encodeur QR maison (mode octet, niveau L) : la page ne charge rien
 test/           unitaires, acceptation (un test par critère), serveur ntfy de test
 scripts/        portail de test avec seuil de couverture, serveur statique local
 docs/adr/       décisions d'architecture
+.env.example    variables documentées — aucune valeur secrète, il n'y en a pas
 ```
 
 Le **noyau est isomorphe** : les mêmes fichiers s'exécutent dans Node 22 et dans un navigateur,

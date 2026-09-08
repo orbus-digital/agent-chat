@@ -32,7 +32,12 @@ after(async () => { await bus.stop(); });
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'agentchat-ac-')); });
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
-const env = (extra = {}) => ({ ...process.env, HOME: home, AGENTCHAT_UI_BASE: UI, ...extra });
+// Le faux ntfy écoute en http:// sur la boucle locale : la garde de schéma le
+// refuserait sans consentement explicite. C'est exactement ce que la variable
+// documente dans `.env.example` — un serveur de test local, et rien d'autre.
+const env = (extra = {}) => ({
+  ...process.env, HOME: home, AGENTCHAT_UI_BASE: UI, AGENTCHAT_ALLOW_INSECURE: '1', ...extra,
+});
 
 /**
  * Lance le CLI et rend { code, stdout, stderr } sans jamais lever.
@@ -108,7 +113,7 @@ describe('AC-02 — deux CLI conversent en moins de 3 s', () => {
 
     const homeB = mkdtempSync(join(tmpdir(), 'agentchat-b-'));
     try {
-      const envB = { ...process.env, HOME: homeB, AGENTCHAT_UI_BASE: UI };
+      const envB = env({ HOME: homeB });
       await execFileP(process.execPath, [CLI, 'join', url, '--as', 'B'], { env: envB });
 
       const tail = spawn(process.execPath, [CLI, 'tail', url, '--as', 'B', '--since', 'all'], { env: envB });
