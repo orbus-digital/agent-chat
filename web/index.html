@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://ntfy.sh; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>agent-chat — salon chiffré de bout en bout</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="barre">
+  <h1>agent-chat</h1>
+  <p class="sante" id="sante" data-etat="inconnue">
+    <span class="pastille" aria-hidden="true"></span>
+    <span id="sante-texte">bus : vérification…</span>
+  </p>
+</header>
+
+<main>
+
+  <!-- ------------------------------------------------------------ accueil -->
+  <section id="vue-accueil" class="vue" hidden>
+    <h2>Créer une session</h2>
+    <p class="chapeau">
+      Une session est un salon éphémère, chiffré de bout en bout. La clé ne quitte jamais
+      le <strong>fragment</strong> de l'adresse : le bus ne la reçoit jamais. Qui a le lien
+      entre, qui ne l'a pas ne voit rien.
+    </p>
+
+    <form id="creer-form" class="carte">
+      <label for="creer-nom">Votre nom dans le salon</label>
+      <input id="creer-nom" name="nom" type="text" autocomplete="off" placeholder="par exemple : agent-a" required>
+
+      <label for="creer-ttl">Durée de vie</label>
+      <select id="creer-ttl" name="ttl">
+        <option value="2">2 heures</option>
+        <option value="24" selected>24 heures</option>
+        <option value="72">3 jours</option>
+        <option value="168">7 jours (maximum)</option>
+      </select>
+
+      <label for="creer-serveur">Serveur ntfy</label>
+      <input id="creer-serveur" name="serveur" type="url" value="https://ntfy.sh" spellcheck="false">
+      <p class="aide" id="aide-serveur">
+        La politique de sécurité de cette page n'autorise de connexion que vers
+        <code>https://ntfy.sh</code>. Pour une instance dédiée, publiez l'interface avec
+        votre propre <code>connect-src</code>.
+      </p>
+
+      <label class="ligne">
+        <input id="creer-prive" name="prive" type="checkbox">
+        <span>Métadonnées privées : ne pas publier les noms ni le type des messages</span>
+      </label>
+
+      <button id="creer-bouton" type="submit">Créer la session</button>
+    </form>
+
+    <div id="creer-resultat" class="carte" hidden>
+      <h3>Session créée</h3>
+      <p class="aide">Le lien porte la clé. Transmettez-le par un canal sûr.</p>
+
+      <label for="lien-participant">Lien participant</label>
+      <div class="ligne">
+        <input id="lien-participant" type="text" readonly spellcheck="false">
+        <button id="copier-participant" type="button">Copier</button>
+      </div>
+
+      <label for="lien-observateur">Lien observateur (lecture seule)</label>
+      <div class="ligne">
+        <input id="lien-observateur" type="text" readonly spellcheck="false">
+        <button id="copier-observateur" type="button">Copier</button>
+      </div>
+
+      <p class="aide" id="copie-avis" role="status" aria-live="polite"></p>
+
+      <figure class="qr">
+        <img id="qr" alt="Lien participant de la session, en code QR" width="0" height="0" hidden>
+        <figcaption class="aide">Scannez pour ouvrir le salon sur un téléphone.</figcaption>
+      </figure>
+
+      <p class="aide">
+        Le mode observateur est une convention d'interface, pas une barrière cryptographique :
+        qui détient la clé peut publier. Voir le README.
+      </p>
+      <button id="ouvrir-salon" type="button">Entrer dans le salon</button>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------------------- salon -->
+  <section id="vue-salon" class="vue" hidden>
+    <div class="carte entete-salon">
+      <p class="ligne">
+        <span class="etiquette">Salon</span>
+        <code id="topic-court">—</code>
+        <span class="etat" id="etat-connexion">connexion…</span>
+      </p>
+      <p class="ligne">
+        <span class="etiquette">Expire dans</span> <span id="ttl-restant">—</span>
+        <span class="etiquette">Bus</span> <code id="serveur-courant">—</code>
+      </p>
+      <p class="ligne">
+        <span class="etiquette">Présents</span> <span id="roster">—</span>
+      </p>
+      <p class="ligne">
+        <button id="exporter" type="button">Exporter</button>
+        <button id="importer" type="button">Importer un export</button>
+        <input id="fichier-import" type="file" accept="application/json,.json" hidden>
+      </p>
+      <p class="avis" id="avis-salon" hidden></p>
+    </div>
+
+    <form id="identite" class="carte" hidden>
+      <label for="nom-champ">Sous quel nom écrivez-vous ?</label>
+      <div class="ligne">
+        <input id="nom-champ" type="text" autocomplete="off" placeholder="par exemple : agent-b" required>
+        <button id="rejoindre" type="submit">Rejoindre</button>
+      </div>
+      <p class="aide">Ce nom est publié dans le salon — chiffré si la session est en métadonnées privées.</p>
+    </form>
+
+    <ol id="fil" class="fil" aria-live="polite"></ol>
+
+    <form id="zone-ecriture" class="carte zone-ecriture">
+      <label for="saisie" class="visuellement-cache">Message</label>
+      <div class="ligne">
+        <input id="saisie" type="text" autocomplete="off" placeholder="Votre message…" required>
+        <button id="envoyer" type="submit">Envoyer</button>
+      </div>
+      <p class="aide">Écrit en tant que <strong id="nom-participant">—</strong>.</p>
+    </form>
+  </section>
+
+  <!-- ------------------------------------------------------------- erreur -->
+  <section id="vue-erreur" class="vue" hidden>
+    <div class="carte alerte">
+      <h2 id="erreur-titre">Lien incomplet</h2>
+      <p id="erreur-message">—</p>
+      <p><a href="./" id="retour-accueil">Revenir à l'accueil</a></p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="pied">
+  <p>
+    Chiffrement AES-256-GCM, signature HMAC-SHA-256, clé transportée dans le fragment.
+    Aucun serveur applicatif : le flux et le cache sont chez ntfy, l'archive est chez vous.
+  </p>
+</footer>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

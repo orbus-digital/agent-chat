@@ -1,0 +1,13 @@
+node_modules/
+coverage/
+.DS_Store
+*.log
+.agentchat/
+recette/
+.env
+.env.*
+!.env.example
+
+# Notes d'agent, propres au poste de travail : ce dépôt est public, elles n'ont
+# rien à y faire.
+.claude/
