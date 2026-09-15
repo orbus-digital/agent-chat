@@ -25,6 +25,8 @@ import { encodeB64u } from '../lib/bytes.js';
 import { Salon } from '../web/js/salon.js';
 import { demarrer, busAutorise, BUS_AUTORISES, defilementDeLaFenetre } from '../web/js/app.js';
 import { versSvg } from '../web/js/qr.js';
+import { ouvrirDemande, lireOctroiPour, lireOctrois, sujetDe, formaterCode } from '../lib/appairage.js';
+import { publish } from '../lib/ntfy.js';
 
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..');
 const execFileP = promisify(execFile);
@@ -762,5 +764,109 @@ describe('page — export et import (AC-09)', () => {
     });
     await doc.getElementById('fichier-import').declencher('change');
     assert.match(doc.getElementById('avis-salon').textContent, /illisible|version/i);
+  });
+});
+
+describe('page — autoriser un agent par code (ADR-003)', () => {
+  /** Un demandeur qui attend : sa clé publique est sur le sujet de son code. */
+  async function demandeurEnAttente(ts = Date.now()) {
+    const demande = await ouvrirDemande({ ts });
+    await publish({
+      base: bus.base, topic: demande.sujet, body: demande.offre.body,
+      title: demande.offre.title, tags: demande.offre.tags,
+    });
+    return demande;
+  }
+
+  const autoriser = async (doc, code) => {
+    doc.getElementById('code-appairage').value = code;
+    await doc.getElementById('appairage').declencher('submit');
+  };
+
+  test('un membre saisit un code et fait entrer le demandeur', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const demande = await demandeurEnAttente();
+    const { doc } = await monter(lienDe(topic, key));
+
+    doc.getElementById('nom-champ').value = 'membre';
+    await doc.getElementById('identite').declencher('submit');
+    await autoriser(doc, formaterCode(demande.code));
+
+    await attendre(() => lireOctrois(bus.messages(demande.sujet)).length === 1);
+    const invitation = await lireOctroiPour({ demande, raw: bus.messages(demande.sujet).at(-1) });
+    assert.equal(invitation.topic, topic);
+    assert.match(doc.getElementById('appairage-avis').textContent, /autoris/i);
+    assert.equal(doc.getElementById('code-appairage').value, '', 'le champ se vide : un code ne sert qu\'une fois');
+  });
+
+  test('le champ n\'est pas affiché à un observateur : il n\'a rien à transmettre', async () => {
+    const { doc } = await monter(lienDe(generateTopic(), generateKey(), '&ro=1'));
+    assert.equal(doc.getElementById('appairage').hidden, true);
+  });
+
+  test('le champ disparaît passé la durée de vie du salon', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const createdAt = 1_780_000_000_000;
+    const pair = new Salon({ topic, key, server: bus.base, participant: 'alice' });
+    await pair.demarrer({ onMessage: () => {} });
+    await pair.annoncer({ ttlH: 1, createdAt });
+    pair.arreter();
+
+    const { doc } = await monter(lienDe(topic, key), { now: () => createdAt + 5 * 3600_000 });
+    await attendre(() => doc.getElementById('ttl-restant').textContent === 'expirée');
+    assert.equal(doc.getElementById('appairage').hidden, true);
+  });
+
+  test('le champ est offert dès qu\'on peut écrire, sans attendre de s\'être nommé', async () => {
+    const { doc } = await monter(lienDe(generateTopic(), generateKey()));
+    assert.equal(doc.getElementById('appairage').hidden, false);
+  });
+
+  test('SUBSTITUTION : le refus est affiché, et rien n\'est publié', async () => {
+    const adversaire = await ouvrirDemande();
+    const codeAnnonce = 'KXR72M4Q9T';
+    const sujetVise = await sujetDe(codeAnnonce);
+    await publish({
+      base: bus.base, topic: sujetVise, body: adversaire.offre.body,
+      title: adversaire.offre.title, tags: adversaire.offre.tags,
+    });
+
+    const { doc } = await monter(lienDe(generateTopic(), generateKey()));
+    await autoriser(doc, codeAnnonce);
+
+    assert.match(doc.getElementById('appairage-avis').textContent, /correspond|substitu/i);
+    assert.equal(lireOctrois(bus.messages(sujetVise)).length, 0);
+    assert.equal(doc.getElementById('code-appairage').value, codeAnnonce, 'un code refusé reste affiché, pour être corrigé');
+  });
+
+  test('un code mal saisi le dit, sans rien demander au bus', async () => {
+    const { doc } = await monter(lienDe(generateTopic(), generateKey()));
+    const avant = bus.requestCount;
+    await autoriser(doc, 'PAS-UN-CODE');
+    assert.match(doc.getElementById('appairage-avis').textContent, /code d'appairage/i);
+    assert.equal(bus.requestCount, avant);
+  });
+
+  test('un champ vide ne déclenche rien', async () => {
+    const { doc } = await monter(lienDe(generateTopic(), generateKey()));
+    const avant = bus.requestCount;
+    await autoriser(doc, '   ');
+    assert.equal(bus.requestCount, avant);
+    assert.equal(doc.getElementById('appairage-avis').textContent, '');
+  });
+
+  test('l\'écouteur est attaché avant tout `await` — une soumission pressée trouve son gestionnaire', async () => {
+    const doc = documentDeLaPage();
+    const app = demarrer({
+      document: doc,
+      location: fausseAdresse(`${UI}${lienDe(generateTopic(), generateKey())}`),
+      minuteur: fauxMinuteur(),
+      fabriqueSalon: (options) => new Salon({ ...options, server: bus.base }),
+    });
+    apps.push(app);
+    assert.ok(doc.getElementById('appairage').ecouteurs.has('submit'), 'aucun gestionnaire de soumission');
+    await app.pret;
   });
 });

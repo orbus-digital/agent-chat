@@ -4,6 +4,8 @@
  *
  * Lot 1 : AC-01, AC-02, AC-03, AC-04, AC-05, AC-07, AC-08, AC-11.
  * Lot 2 : AC-09, AC-10, AC-15, AC-16 (AC-06 et AC-13 sont éprouvés par test/interface.test.js).
+ * V1.2 : AC-17, AC-18, AC-19, AC-20, AC-21 — l'appairage (ADR-003). AC-22 (le
+ *        côté interface) est éprouvé par test/interface-page.test.js.
  */
 
 import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
@@ -11,13 +13,17 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtempSync, rmSync, statSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FakeNtfy } from './helpers/fake-ntfy.js';
 import { TAG_SIG } from '../lib/protocol.js';
 import { altererCorps } from './helpers/alterer.js';
+import {
+  ouvrirDemande, sujetDe, formaterCode, lireOffres, lireOctrois,
+  ALPHABET_CODE, VALIDITE_MS,
+} from '../lib/appairage.js';
 
 const execFileP = promisify(execFile);
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -649,5 +655,213 @@ describe('AC-16 — migration de topic sans perte', () => {
     const url = await creer();
     const r = await cli(['migrate', `${url}&ro=1`, '--as', 'observateur']);
     assert.equal(r.code, 3);
+  });
+});
+
+// ------------------------------------------------- appairage (V1.2, ADR-003)
+
+/**
+ * Lance un vrai processus `agentchat pair` et rend la main **dès que le code
+ * est imprimé** — c'est à cet instant qu'un membre peut autoriser.
+ */
+function lancerPair(args, opts = {}) {
+  const proc = spawn(process.execPath, [CLI, 'pair', '--server', bus.base, ...args], { env: env(opts.env) });
+  const out = [];
+  const err = [];
+  let annonce;
+  const annonceFaite = new Promise((r) => { annonce = r; });
+
+  let tampon = '';
+  proc.stdout.on('data', (c) => {
+    tampon += c.toString();
+    const parts = tampon.split('\n');
+    tampon = parts.pop();
+    for (const l of parts.filter((x) => x.trim())) {
+      out.push(l);
+      if (out.length === 1) annonce(JSON.parse(l));
+    }
+  });
+  proc.stderr.on('data', (c) => err.push(c.toString()));
+
+  const code = new Promise((resolve) => proc.on('close', resolve));
+  return { proc, out, err, code, annonce: Promise.race([annonceFaite, code.then(() => null)]) };
+}
+
+/** Attend que le sujet d'appairage porte au moins `n` messages. */
+async function attendreSur(sujet, n, delai = 8000) {
+  const fin = Date.now() + delai;
+  while (Date.now() < fin) {
+    if (bus.messages(sujet).length >= n) return bus.messages(sujet);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`rien n'est arrivé sur ${sujet} (attendu ${n})`);
+}
+
+describe('AC-17 — le demandeur annonce un code et publie sa seule clé publique', () => {
+  test('le code a la forme dictée, et le sujet en dérive', async () => {
+    const p = lancerPair(['--as', 'agent-b', '--wait', '20']);
+    try {
+      const a = await p.annonce;
+      assert.equal(a.code.length, 10);
+      assert.equal(a.waiting, true);
+      assert.equal(a.display, formaterCode(a.code));
+      for (const c of a.code) assert.ok(ALPHABET_CODE.includes(c), `caractère ambigu dans le code : ${c}`);
+      assert.equal(a.topic, await sujetDe(a.code));
+
+      const messages = await attendreSur(a.topic, 1);
+      assert.equal(messages.length, 1);
+      assert.equal(lireOffres(messages).length, 1, 'l\'offre doit être lisible');
+      assert.equal(messages[0].title, 'ac', 'le bus ne doit pas apprendre qui demande');
+    } finally {
+      p.proc.kill('SIGTERM');
+      await p.code;
+    }
+  });
+
+  test('sans --as, rien n\'est publié et le code de retour est 2', async () => {
+    const r = await cli(['pair', '--server', bus.base]);
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /--as/);
+  });
+});
+
+describe('AC-18 — un membre autorise, le demandeur entre', () => {
+  test('la session est écrite en 600, le roster annoncé, l\'URL imprimée', async () => {
+    const url = await creer(['--ttl', '2', '--as', 'createur']);
+    const p = lancerPair(['--as', 'agent-b', '--wait', '20']);
+    try {
+      const a = await p.annonce;
+      await attendreSur(a.topic, 1);
+
+      const autorisation = await cli(['authorize', url, formaterCode(a.code)]);
+      assert.equal(autorisation.code, 0, autorisation.stderr);
+      assert.deepEqual(JSON.parse(autorisation.stdout.trim()), { code: a.code, topic: topicDe(url), granted: true });
+
+      assert.equal(await p.code, 0, p.err.join(''));
+      const lien = p.out[p.out.length - 1];
+      assert.equal(topicDe(lien), topicDe(url));
+
+      const chemin = join(home, '.agentchat', `${topicDe(url)}.json`);
+      assert.equal(statSync(chemin).mode & 0o777, 0o600);
+      const s = JSON.parse(readFileSync(chemin, 'utf8'));
+      assert.equal(s.participant, 'agent-b');
+      assert.equal(s.ttlH, 2, 'la durée vient du salon (R4)');
+      assert.equal(s.ro, false);
+
+      // Le demandeur est entré pour de bon : il lit et il écrit.
+      assert.equal((await cli(['send', lien, 'entré par appairage', '--as', 'agent-b'])).code, 0);
+      const lus = lignes((await cli(['tail', lien, '--once'])).stdout).map(JSON.parse);
+      assert.ok(lus.some((m) => m.text === 'entré par appairage' && m.verified === true));
+    } finally {
+      p.proc.kill('SIGTERM');
+    }
+  });
+
+  test('rien de la session n\'est lisible sur le sujet d\'appairage', async () => {
+    const url = await creer(['--ttl', '2', '--as', 'createur']);
+    const p = lancerPair(['--as', 'agent-b', '--wait', '20']);
+    try {
+      const a = await p.annonce;
+      await attendreSur(a.topic, 1);
+      await cli(['authorize', url, a.code]);
+      assert.equal(await p.code, 0, p.err.join(''));
+
+      const brut = bus.rawDump(a.topic);
+      assert.ok(brut.length > 0);
+      const cle = new URLSearchParams(url.slice(url.indexOf('#') + 1)).get('k');
+      assert.equal(brut.includes(cle), false, 'la clé de session est lisible sur le sujet d\'appairage');
+      assert.equal(brut.includes(topicDe(url)), false, 'le topic du salon est lisible');
+      assert.equal(brut.includes(a.code), false, 'le code lui-même est lisible');
+      for (const enc of ['base64', 'base64url', 'hex']) {
+        assert.equal(brut.includes(Buffer.from(cle).toString(enc)), false, `la clé apparaît en ${enc}`);
+      }
+    } finally {
+      p.proc.kill('SIGTERM');
+    }
+  });
+});
+
+describe('AC-19 — la substitution de clé publique est refusée', () => {
+  test('une clé bien formée mais d\'une autre paire ne vaut pas le code : code 5, rien publié', async () => {
+    const url = await creer(['--ttl', '2', '--as', 'createur']);
+
+    // L'adversaire a une vraie paire ECDH et une offre parfaitement valide —
+    // mais dont l'empreinte est SON code, pas celui qui est dicté.
+    const adversaire = await ouvrirDemande({ ts: Date.now() });
+    const codeAnnonce = 'KXR72M4Q9T';
+    const sujetVise = await sujetDe(codeAnnonce);
+    await fetch(`${bus.base}/${sujetVise}`, {
+      method: 'POST', headers: { 'X-Title': 'ac', 'X-Tags': 'pair-offer' }, body: adversaire.offre.body,
+    });
+    assert.equal(lireOffres(bus.messages(sujetVise)).length, 1);
+
+    const r = await cli(['authorize', url, codeAnnonce]);
+    assert.equal(r.code, 5, r.stderr);
+    assert.equal(lireOctrois(bus.messages(sujetVise)).length, 0, 'une clé de session a été scellée pour un adversaire');
+  });
+
+  test('aucune clé du tout : le membre le dit, il n\'invente pas', async () => {
+    const url = await creer(['--ttl', '2', '--as', 'createur']);
+    const r = await cli(['authorize', url, 'KXR7-2M4Q-9T']);
+    assert.equal(r.code, 5);
+    assert.match(r.stderr, /correspond/i);
+  });
+});
+
+describe('AC-20 — un code expiré est refusé', () => {
+  test('le demandeur qui n\'est pas autorisé sort en code 3, sans écrire de session', async () => {
+    const p = lancerPair(['--as', 'agent-b', '--wait', '1']);
+    assert.ok(await p.annonce);
+    assert.equal(await p.code, 3);
+    assert.match(p.err.join(''), /expir/i);
+    assert.equal(existsSync(join(home, '.agentchat')), false, 'aucune session ne doit être écrite');
+  });
+
+  test('une offre publiée il y a plus de cinq minutes ne vaut plus rien : code 3', async () => {
+    const url = await creer(['--ttl', '2', '--as', 'createur']);
+    const vieille = await ouvrirDemande({ ts: Date.now() - VALIDITE_MS - 1000 });
+    await fetch(`${bus.base}/${vieille.sujet}`, {
+      method: 'POST', headers: { 'X-Title': 'ac', 'X-Tags': 'pair-offer' }, body: vieille.offre.body,
+    });
+
+    const r = await cli(['authorize', url, vieille.code]);
+    assert.equal(r.code, 3, r.stderr);
+    assert.match(r.stderr, /expir/i);
+    assert.equal(lireOctrois(bus.messages(vieille.sujet)).length, 0);
+  });
+});
+
+describe('AC-21 — un code ne sert qu\'une fois', () => {
+  test('le second membre est refusé (code 3), sans partager d\'état avec le premier', async () => {
+    const url = await creer(['--ttl', '2', '--as', 'createur']);
+    const p = lancerPair(['--as', 'agent-b', '--wait', '20']);
+    try {
+      const a = await p.annonce;
+      await attendreSur(a.topic, 1);
+      assert.equal((await cli(['authorize', url, a.code])).code, 0);
+      assert.equal(await p.code, 0, p.err.join(''));
+
+      // Un second membre, dans un $HOME à lui : rien ne relie les deux postes.
+      const homeC = mkdtempSync(join(tmpdir(), 'agentchat-c-'));
+      try {
+        const second = await execFileP(process.execPath, [CLI, 'authorize', url, a.code], {
+          env: { ...process.env, HOME: homeC, AGENTCHAT_UI_BASE: UI, AGENTCHAT_ALLOW_INSECURE: '1' },
+        }).then(() => ({ code: 0, stderr: '' }), (e) => ({ code: e.code, stderr: e.stderr ?? '' }));
+        assert.equal(second.code, 3, second.stderr);
+        assert.match(second.stderr, /consomm/i);
+      } finally {
+        rmSync(homeC, { recursive: true, force: true });
+      }
+      assert.equal(lireOctrois(bus.messages(a.topic)).length, 1, 'un second octroi a été publié');
+    } finally {
+      p.proc.kill('SIGTERM');
+    }
+  });
+
+  test('un observateur ne fait entrer personne : code 3', async () => {
+    const url = await creer(['--ttl', '2', '--as', 'createur']);
+    const r = await cli(['authorize', `${url}&ro=1`, 'KXR7-2M4Q-9T']);
+    assert.equal(r.code, 3);
+    assert.match(r.stderr, /observateur/i);
   });
 });

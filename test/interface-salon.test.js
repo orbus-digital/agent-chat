@@ -11,6 +11,11 @@ import { generateKey, generateTopic, deriveWriteKey } from '../lib/crypto.js';
 import { encodeMessage } from '../lib/protocol.js';
 import { publish } from '../lib/ntfy.js';
 import { Salon } from '../web/js/salon.js';
+import {
+  ouvrirDemande, lireOctroiPour, lireOctrois, sujetDe, formaterCode,
+  AppairageError, VALIDITE_MS,
+} from '../lib/appairage.js';
+import { encodeB64u, decodeB64u } from '../lib/bytes.js';
 import { altererCorps } from './helpers/alterer.js';
 
 let bus;
@@ -263,5 +268,144 @@ describe('salon — migration (AC-16)', () => {
 
     assert.deepEqual(recus.filter((m) => !m.control).map((m) => m.texte), ['avant', 'apres']);
     assert.equal(salon.topic, nouveau);
+  });
+});
+
+// ---------------------------------------------------------------- appairage
+
+describe('salon — autoriser un agent par code (ADR-003)', () => {
+  /** Un demandeur qui a publié son offre sur le sujet dérivé de son code. */
+  async function demandeurEnAttente(ts = Date.now()) {
+    const demande = await ouvrirDemande({ ts });
+    await publish({
+      base: bus.base, topic: demande.sujet, body: demande.offre.body,
+      title: demande.offre.title, tags: demande.offre.tags,
+    });
+    return demande;
+  }
+
+  test('le membre autorise, et le demandeur ouvre exactement la clé du salon', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const demande = await demandeurEnAttente();
+
+    const salon = ouvrir({ topic, key, participant: 'membre' });
+    await salon.demarrer({ onMessage: () => {} });
+    await salon.annoncer({ ttlH: 2, createdAt: Date.now() });
+    await attendre(() => salon.participants.includes('membre'));
+
+    assert.deepEqual(await salon.autoriser(formaterCode(demande.code)),
+      { code: demande.code, display: formaterCode(demande.code) });
+
+    const octroi = bus.messages(demande.sujet).at(-1);
+    const invitation = await lireOctroiPour({ demande, raw: octroi });
+    assert.equal(invitation.topic, topic);
+    assert.deepEqual(decodeB64u(invitation.k), key);
+    assert.equal(invitation.ttlH, 2, 'la durée annoncée par le salon voyage avec l\'invitation');
+    assert.ok(invitation.participants.includes('membre'));
+  });
+
+  test('rien de la session n\'est lisible sur le sujet d\'appairage', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const demande = await demandeurEnAttente();
+    const salon = ouvrir({ topic, key, participant: 'membre' });
+    await salon.demarrer({ onMessage: () => {} });
+    await salon.autoriser(demande.code);
+
+    const brut = bus.rawDump(demande.sujet);
+    assert.equal(brut.includes(topic), false);
+    assert.equal(brut.includes(encodeB64u(key)), false);
+    assert.equal(brut.includes(demande.code), false);
+  });
+
+  test('un observateur ne fait entrer personne', async () => {
+    const demande = await demandeurEnAttente();
+    const salon = ouvrir({ topic: generateTopic(), key: generateKey(), ro: true });
+    await salon.demarrer({ onMessage: () => {} });
+    await assert.rejects(() => salon.autoriser(demande.code), /observateur/i);
+    assert.equal(lireOctrois(bus.messages(demande.sujet)).length, 0);
+  });
+
+  test('une session expirée n\'admet plus personne', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const demande = await demandeurEnAttente();
+    const t0 = 1_780_000_000_000;
+    const salon = ouvrir({ topic, key, participant: 'membre', now: () => t0 });
+    await salon.demarrer({ onMessage: () => {} });
+    await salon.annoncer({ ttlH: 2, createdAt: t0 - 3 * 3600_000 });
+    await attendre(() => salon.ttl.expire === true);
+
+    await assert.rejects(() => salon.autoriser(demande.code), /expir/i);
+    assert.equal(lireOctrois(bus.messages(demande.sujet)).length, 0);
+  });
+
+  test('SUBSTITUTION : une clé publique qui ne répond pas du code est refusée', async () => {
+    const adversaire = await ouvrirDemande();
+    const codeAnnonce = 'KXR72M4Q9T';
+    const sujetVise = await sujetDe(codeAnnonce);
+    await publish({
+      base: bus.base, topic: sujetVise, body: adversaire.offre.body,
+      title: adversaire.offre.title, tags: adversaire.offre.tags,
+    });
+
+    const salon = ouvrir({ topic: generateTopic(), key: generateKey(), participant: 'membre' });
+    await salon.demarrer({ onMessage: () => {} });
+    await assert.rejects(
+      () => salon.autoriser(codeAnnonce),
+      (e) => e instanceof AppairageError && e.raison === 'aucune-offre',
+    );
+    assert.equal(lireOctrois(bus.messages(sujetVise)).length, 0);
+  });
+
+  test('DÉJÀ CONSOMMÉ : le second membre est refusé, sans état partagé avec le premier', async () => {
+    const demande = await demandeurEnAttente();
+    const premier = ouvrir({ topic: generateTopic(), key: generateKey(), participant: 'membre-1' });
+    await premier.demarrer({ onMessage: () => {} });
+    await premier.autoriser(demande.code);
+
+    const second = ouvrir({ topic: generateTopic(), key: generateKey(), participant: 'membre-2' });
+    await second.demarrer({ onMessage: () => {} });
+    await assert.rejects(
+      () => second.autoriser(demande.code),
+      (e) => e instanceof AppairageError && e.raison === 'deja-consomme',
+    );
+    assert.equal(lireOctrois(bus.messages(demande.sujet)).length, 1);
+  });
+
+  test('EXPIRÉ : au-delà de cinq minutes, le code ne vaut plus rien', async () => {
+    const t0 = 1_780_000_000_000;
+    const demande = await demandeurEnAttente(t0);
+    const salon = ouvrir({ topic: generateTopic(), key: generateKey(), participant: 'membre', now: () => t0 + VALIDITE_MS });
+    await salon.demarrer({ onMessage: () => {} });
+    await assert.rejects(
+      () => salon.autoriser(demande.code),
+      (e) => e instanceof AppairageError && e.raison === 'code-expire',
+    );
+  });
+
+  test('un code mal saisi est refusé avant toute requête', async () => {
+    const salon = ouvrir({ topic: generateTopic(), key: generateKey(), participant: 'membre' });
+    await salon.demarrer({ onMessage: () => {} });
+    const avant = bus.requestCount;
+    await assert.rejects(
+      () => salon.autoriser('PAS-UN-CODE'),
+      (e) => e instanceof AppairageError && e.raison === 'code-invalide',
+    );
+    assert.equal(bus.requestCount, avant, 'un code illisible ne doit rien demander au bus');
+  });
+
+  test('sans durée annoncée, l\'invitation n\'en invente pas (R4, D-09)', async () => {
+    const topic = generateTopic();
+    const key = generateKey();
+    const demande = await demandeurEnAttente();
+    const salon = ouvrir({ topic, key, participant: 'membre' });
+    await salon.demarrer({ onMessage: () => {} });
+
+    await salon.autoriser(demande.code);
+    const invitation = await lireOctroiPour({ demande, raw: bus.messages(demande.sujet).at(-1) });
+    assert.equal('ttlH' in invitation, false);
+    assert.equal('createdAt' in invitation, false);
   });
 });

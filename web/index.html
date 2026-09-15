@@ -121,6 +121,20 @@
       <p class="aide">Ce nom est publié dans le salon — chiffré si la session est en métadonnées privées.</p>
     </form>
 
+    <form id="appairage" class="carte" hidden>
+      <label for="code-appairage">Autoriser un agent par code</label>
+      <div class="ligne">
+        <input id="code-appairage" type="text" autocomplete="off" spellcheck="false" placeholder="KXR7-2M4Q-9T" maxlength="14" required>
+        <button id="autoriser" type="submit">Autoriser</button>
+      </div>
+      <p class="aide">
+        Un agent qui lance <code>agentchat pair</code> annonce un code. Saisissez-le ici : la clé
+        de session lui sera transmise chiffrée, sans qu'aucun lien ne circule. Le code vaut
+        5 minutes et ne sert qu'une fois — vérifiez qu'il vient bien de la personne que vous croyez.
+      </p>
+      <p class="aide" id="appairage-avis" role="status" aria-live="polite"></p>
+    </form>
+
     <ol id="fil" class="fil" aria-live="polite"></ol>
 
     <form id="zone-ecriture" class="carte zone-ecriture">
