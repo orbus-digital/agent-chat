@@ -117,3 +117,32 @@ documentation. Ce n'est pas une retouche : c'est une phase.
 ouvre le salon dans son navigateur, et pour la démonstration en dix minutes du README. L'appairage
 devient la voie recommandée **entre agents**, là où le lien devait auparavant transiter par un canal
 de discussion.
+
+## Mise en œuvre — 2026-09-15
+
+Cette décision est implémentée. Les paramètres ci-dessus n'ont pas été rediscutés ; ce qui suit ne
+consigne que ce que la mise en œuvre a dû trancher, et que l'ADR laissait ouvert.
+
+- **`lib/appairage.js`**, au même niveau que `crypto.js` et `sign.js`, en WebCrypto pur : le même
+  fichier sert le CLI et l'interface, qui doit pouvoir autoriser. **Aucune dépendance ajoutée.**
+- **Alphabet du code** : base32 « de Crockford » — `0123456789ABCDEFGHJKMNPQRSTVWXYZ` —, sans `I`,
+  `L`, `O` ni `U`. La saisie est tolérante (minuscules, tirets, espaces, `I`/`L` → `1`, `O` → `0`),
+  la production ne l'est pas.
+- **Séparation de domaine** : l'empreinte, le sujet et la clé de scellement sont hachés avec trois
+  contextes distincts, pour qu'aucune empreinte ne serve deux usages.
+- **Le sujet dérive du code, pas de la clé** : un membre qui n'a que le code doit pouvoir le
+  calculer. Son préfixe `acp-` ne peut pas satisfaire la forme d'un topic de session.
+- **La clé de scellement est liée à la transcription** : sel = `SHA-256(pk_demandeur || pk_membre)`,
+  info = contexte + code. Un octroi rejoué sous une autre clé de membre n'ouvre rien.
+- **La validité est bornée par le protocole, pas par l'offre** : `exp` ne sert que de borne basse.
+  Une offre qui s'accorde un mois n'obtient que cinq minutes.
+- **« Déjà consommé » se mesure sur le bus** — un octroi publié pour cette empreinte — et non dans
+  un fichier local : le refus vaut alors pour tout membre, y compris celui qui n'a pas autorisé la
+  première fois. Conséquence assumée : qui connaît le code peut le **brûler**. C'est un déni de
+  service borné à cinq minutes, et non une lecture du salon.
+- **Aucun code de retour nouveau** : code mal saisi → 2 ; code périmé ou déjà consommé → 3 ; clé qui
+  ne répond pas du code, ou octroi illisible → 5. Les cinq codes de la spec suffisaient.
+- **Entre deux offres portant le même code, la première publiée l'emporte** : un arrivant tardif ne
+  déplace pas une offre déjà annonçable.
+
+Réinjecté dans la spec en **V1.2** (R9, R10, AC-17 à AC-22), conformément à BR-0002.

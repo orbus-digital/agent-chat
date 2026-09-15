@@ -138,6 +138,29 @@ async function ouvrir(navigateur, options, tag) {
   return { contexte, page };
 }
 
+/**
+ * Attend une condition **depuis Node**, jamais dans la page.
+ *
+ * `page.waitForFunction` interroge la condition en boucle par `eval` dans la
+ * page — ce que la CSP stricte du site refuse (`unsafe-eval` absent, AC-13).
+ * Le scenario tombait alors sur un `EvalError` qui ressemble a un defaut du
+ * produit alors qu'il vient du harnais : le detail qui tranche, c'est qu'un
+ * `waitForFunction` dont la condition est vraie au premier essai passe, et que
+ * seuls ceux qui doivent vraiment attendre echouent.
+ *
+ * `page.evaluate` passe par CDP (`Runtime.callFunctionOn`) et n'est pas soumis
+ * a la CSP. **Ne jamais relacher la CSP pour faire passer un test** : on
+ * changerait la mesure, pas le risque.
+ */
+async function attendreDansLaPage(page, fn, { quoi, delai = 30_000, pas = 100 } = {}) {
+  const fin = Date.now() + delai;
+  for (;;) {
+    if (await page.evaluate(fn)) return;
+    if (Date.now() > fin) throw new Error(`delai depasse en attendant : ${quoi}`);
+    await new Promise((r) => setTimeout(r, pas));
+  }
+}
+
 const mesure = (page, selecteur) => page.evaluate((s) => {
   const el = document.querySelector(s);
   if (!el) return null;
@@ -203,7 +226,8 @@ try {
     await page.click('#copier-participant');
     // Le presse-papier est asynchrone : on attend que la page ait tranché,
     // plutôt que de lire un état intermédiaire.
-    await page.waitForFunction(() => document.getElementById('copie-avis').textContent.length > 0, null, { timeout: 5000 });
+    await attendreDansLaPage(page, () => document.getElementById('copie-avis').textContent.length > 0,
+      { quoi: 'la page tranche sur la copie', delai: 5000 });
     const avisCopie = await page.textContent('#copie-avis');
     verifier(/copié/i.test(avisCopie), 'la copie du lien participant est confirmée', avisCopie);
     const presse = await page.evaluate(() => navigator.clipboard.readText());
@@ -220,7 +244,8 @@ try {
     const { contexte, page } = await ouvrir(navigateur, { viewport: { width: 390, height: 844 } }, '[salon]');
     await page.addInitScript(() => localStorage.setItem('agentchat:nom', 'agent-navigateur'));
     await page.goto(session.url, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => document.querySelectorAll('#fil li').length >= 12, null, { timeout: 30_000 });
+    await attendreDansLaPage(page, () => document.querySelectorAll('#fil li').length >= 12,
+      { quoi: 'douze messages dans le fil' });
 
     verifier(await page.locator('#zone-ecriture').isVisible(), 'la zone d’écriture est offerte à un participant');
 
@@ -276,7 +301,8 @@ try {
   {
     const { contexte, page } = await ouvrir(navigateur, { viewport: { width: 1440, height: 900 }, colorScheme: 'dark' }, '[observateur]');
     await page.goto(`${session.url}&ro=1`, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => document.querySelectorAll('#fil li').length >= 12, null, { timeout: 30_000 });
+    await attendreDansLaPage(page, () => document.querySelectorAll('#fil li').length >= 12,
+      { quoi: 'douze messages dans le fil' });
 
     verifier(!(await page.locator('#zone-ecriture').isVisible()), 'aucune zone d’écriture en mode observateur (AC-06)');
     verifier(!(await page.locator('#identite').isVisible()), 'aucune demande de nom en mode observateur');
@@ -305,6 +331,67 @@ try {
     await capturer(page, '05-cle-absente-390');
     plaintes.push(...page.plaintes);
     await contexte.close();
+  }
+
+  // --- 5. appairage : autoriser un agent par code, depuis le navigateur ----
+  for (const { largeur, hauteur, nom } of [
+    { largeur: 390, hauteur: 844, nom: 'mobile' },
+    { largeur: 1280, hauteur: 900, nom: 'bureau' },
+  ]) {
+    titre(`Appairage — ${largeur} px (ADR-003, AC-22)`);
+    const demandeur = mkdtempSync(join(tmpdir(), 'agentchat-pair-'));
+    const sorties = [];
+    let annonce;
+    const annonceFaite = new Promise((r) => { annonce = r; });
+    // Le vrai verbe du CLI, sur le vrai bus : rien n'est simulé ici non plus.
+    const fini = agentchat(['pair', '--as', `agent-appaire-${nom}`, '--server', values.bus], {
+      stdout: (l) => { sorties.push(l); if (sorties.length === 1) annonce(JSON.parse(l)); },
+      stderr: () => {}, home: demandeur, uiBase: BASE, allowInsecure: true,
+    });
+
+    const { contexte, page } = await ouvrir(navigateur, { viewport: { width: largeur, height: hauteur } }, `[appairage-${nom}]`);
+    try {
+      const attendu = await Promise.race([annonceFaite, fini.then(() => null)]);
+      if (!attendu) throw new Error('« agentchat pair » n\'a pas annoncé de code');
+
+      await page.addInitScript(() => localStorage.setItem('agentchat:nom', 'agent-navigateur'));
+      await page.goto(session.url, { waitUntil: 'domcontentloaded' });
+      await attendreDansLaPage(page, () => document.querySelectorAll('#fil li').length >= 1,
+        { quoi: 'le fil du salon s\'affiche' });
+
+      verifier(await page.locator('#appairage').isVisible(),
+        'le champ d’appairage est offert à un membre qui peut écrire (AC-22)');
+      const champ = await mesure(page, '#code-appairage');
+      verifier(champ.height <= 64, 'le champ de code garde une hauteur de champ', `${Math.round(champ.height)} px`);
+      verifier(champ.right <= largeur, 'le champ de code tient dans l’écran', `bord droit à ${Math.round(champ.right)} px`);
+
+      await page.fill('#code-appairage', attendu.display);
+      await capturer(page, `09-appairage-code-saisi-${largeur}`);
+      await page.click('#autoriser');
+      await attendreDansLaPage(page, () => /autoris|correspond|expir|consomm|code d/i.test(document.getElementById('appairage-avis').textContent),
+        { quoi: 'la page tranche sur le code', delai: 30_000 });
+
+      const avis = await page.textContent('#appairage-avis');
+      verifier(/autoris/i.test(avis), 'l’autorisation est confirmée dans la page', avis);
+      verifier(await page.inputValue('#code-appairage') === '', 'le champ se vide : un code ne sert qu’une fois');
+      await capturer(page, `10-appairage-autorise-${largeur}`);
+
+      const code = await Promise.race([
+        fini,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('le demandeur n’est pas entré en 30 s')), 30_000)),
+      ]);
+      verifier(code === 0, 'le demandeur est entré dans le salon sans qu’aucun lien ne circule', `code de retour ${code}`);
+      verifier(sorties.at(-1)?.includes(new URL(session.url).hash.slice(1).split('&')[0].replace('t=', '')),
+        'la session reçue est bien celle du salon', sorties.at(-1)?.slice(0, 60));
+
+      plaintes.push(...page.plaintes);
+    } finally {
+      await contexte.close();
+      // Le minuteur du demandeur tient jusqu'à cinq minutes : on ne laisse pas
+      // le scénario s'achever sur une attente en cours.
+      await Promise.race([fini, new Promise((r) => setTimeout(r, 1000))]);
+      rmSync(demandeur, { recursive: true, force: true });
+    }
   }
 
   titre('Console');

@@ -9,9 +9,11 @@
 
 import { deriveWriteKey, IntegrityError } from '../lib/crypto.js';
 import { encodeMessage, decodeMessage, ReplayGuard } from '../lib/protocol.js';
+import { encodeB64u } from '../lib/bytes.js';
 import { publish, subscribe, poll } from '../lib/ntfy.js';
 import { assertBaseTransport } from '../lib/serveur.js';
 import { buildExport, decodeExport } from '../lib/archive.js';
+import { preparerOctroi, sujetDe, normaliserCode, formaterCode } from '../lib/appairage.js';
 import { etatTtl, vueMessage, Roster } from './etat.js';
 
 export const TTL_DEFAUT_H = 24;
@@ -193,6 +195,60 @@ export class Salon {
     const messages = await decodeExport({ key: this.key, exportObj: archive });
     for (const m of messages) onMessage(vueMessage(m));
     return messages.length;
+  }
+
+  /**
+   * Fait entrer un agent qui annonce un code (ADR-003), sans que la clé de
+   * session ne voyage dans une URL.
+   *
+   * Ce que fait ce code, et dans cet ordre : il refuse d'abord ce qu'il ne peut
+   * pas accorder — on ne transmet pas un droit d'écrire qu'on n'a pas soi-même,
+   * et on n'admet personne dans un salon périmé —, puis il relit le sujet de
+   * rendez-vous et **vérifie que l'empreinte de la clé publiée est exactement
+   * le code saisi**. C'est cette vérification, et elle seule, qui distingue le
+   * demandeur d'un adversaire ayant substitué sa propre clé.
+   *
+   * @param {string} codeSaisi le code tel qu'il a été dicté, tiret ou non
+   * @returns {Promise<{code:string, display:string}>} `display` est la forme
+   *   groupée, celle qu'on a dictée : c'est elle que le membre doit relire pour
+   *   s'assurer qu'il a autorisé le bon agent.
+   * @throws {AppairageError} substitution, code périmé, code déjà consommé,
+   *   code illisible — chacun avec sa raison, et sans rien publier.
+   */
+  async autoriser(codeSaisi) {
+    if (this.ro) throw new Error('Mode observateur : autoriser un agent est refusé.');
+    if (!this.ttlInconnu && this.ttl.expire) throw new Error('Session expirée : aucun agent ne peut plus y être admis.');
+
+    // Normalisé d'abord : un code illisible ne doit rien demander au bus.
+    const code = normaliserCode(codeSaisi);
+    const sujet = await sujetDe(code);
+    const messages = await poll({ base: this.server, topic: sujet, since: 'all', fetchImpl: this.fetchImpl });
+
+    const { octroi } = await preparerOctroi({
+      code, messages, maintenant: this.now(), invitation: this.#invitation(),
+    });
+    await publish({
+      base: this.server, topic: sujet, body: octroi.body,
+      title: octroi.title, tags: octroi.tags, fetchImpl: this.fetchImpl,
+    });
+    return { code, display: formaterCode(code) };
+  }
+
+  /**
+   * Ce que le membre a le droit de transmettre : de quoi écrire une session
+   * complète. La durée de vie n'y figure que si le salon l'a **annoncée** —
+   * sinon elle est omise, et l'arrivant la supposera pour lui seul (R4, D-09).
+   */
+  #invitation() {
+    const duree = this.createdAt !== null ? { ttlH: this.ttlH, createdAt: this.createdAt } : {};
+    return {
+      topic: this.topic,
+      server: this.server,
+      k: encodeB64u(this.key),
+      privateMeta: this.privateMeta,
+      participants: this.participants,
+      ...duree,
+    };
   }
 
   /** Santé du bus de ce salon (AC-13). */

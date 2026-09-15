@@ -23,6 +23,9 @@ const LCOV = join(RACINE, 'coverage', 'lcov.info');
  * AC-12 — le noyau cryptographique et le transport ne descendent pas sous 80 %.
  * `lib/serveur.js` y est ajouté : c'est une garde de sécurité, et une garde non
  * couverte est une garde dont on ne sait pas si elle mord encore (ADR-002).
+ * `lib/appairage.js` pour la même raison : ses trois refus — substitution, code
+ * périmé, code déjà consommé — sont tout ce qui distingue l'appairage d'une
+ * remise de clé à qui la demande (ADR-003).
  * Les modules de l'interface sont tenus au même seuil : ce sont eux qui portent
  * les règles observables du salon (mode observateur, TTL, clé absente).
  */
@@ -30,6 +33,7 @@ const SEUILS = {
   'lib/crypto.js': 80,
   'lib/sign.js': 80,
   'lib/serveur.js': 80,
+  'lib/appairage.js': 80,
   'lib/ntfy.js': 80,
   'web/js/etat.js': 80,
   'web/js/salon.js': 80,

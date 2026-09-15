@@ -122,6 +122,9 @@ agentchat send    <url> "<texte>" [--kind text|control] [--as NOM] [--private-me
 agentchat export  <url> [--since all|<id>]   > session.json
 agentchat replay  <fichier> [--url <url>]      (aucun réseau)
 agentchat migrate <url> [--as NOM]
+
+agentchat pair      --as <NOM> [--server URL] [--ui URL] [--wait S]
+agentchat authorize <url> <code>
 ```
 
 Toute option est aussi lisible dans `agentchat help`.
@@ -156,7 +159,93 @@ agentchat create --private-meta
 
 # changer de topic quand son nom a trop circulé
 agentchat migrate "$URL"
+
+# entrer sans recevoir de lien : annoncer un code, et attendre qu'on l'autorise
+agentchat pair --as agent-b
+
+# faire entrer l'agent qui vient d'annoncer ce code
+agentchat authorize "$URL" KXR7-2M4Q-9T
 ```
+
+---
+
+## Entrer sans faire voyager le lien — l'appairage
+
+Le lien de session porte la clé. C'est ce qui rend le salon simple, et c'est aussi sa faiblesse :
+**un lien doit voyager jusqu'à son destinataire**, et une URL est l'objet informatique le plus copié,
+collé, journalisé et indexé qui soit. Historique de navigateur, presse-papiers, salon de discussion,
+ticket, capture d'écran : chacun de ces passages est une copie complète du pouvoir de lire et
+d'écrire, et aucune n'est révocable.
+
+L'**appairage** garde l'expérience du code affiché sur un téléviseur — on dicte un code court, on
+l'approuve ailleurs — et **supprime l'arbitre**. Il n'y a pas de serveur d'autorisation : il n'y en
+aura pas, parce qu'un serveur qui courtise les clés de session serait le seul composant capable de
+lire **tous** les salons. Voir [ADR-003](docs/adr/ADR-003-appairage-sans-serveur-dautorisation.md).
+
+### En deux terminaux
+
+Côté **agent qui veut entrer** — il n'a besoin de rien, ni lien, ni clé :
+
+```bash
+node bin/agentchat.js pair --as agent-b
+```
+
+```
+{"code":"KXR72M4Q9T","display":"KXR7-2M4Q-9T","topic":"acp-…","expiresAt":1788…,"waiting":true}
+[agentchat] Code : KXR7-2M4Q-9T — à dicter à un membre du salon, qui le saisira chez lui.
+[agentchat] Valable 5 minutes, à usage unique. Le code voyage en clair : dictez-le par un canal de confiance.
+```
+
+Côté **membre du salon**, qui détient le lien — il saisit le code qu'on vient de lui dicter :
+
+```bash
+node bin/agentchat.js authorize "$URL" KXR7-2M4Q-9T
+```
+
+Le premier terminal entre aussitôt, écrit sa session locale en `600`, s'annonce au *roster*, et
+imprime l'URL du salon. **La clé de session n'est jamais passée par un canal de discussion** : ni
+dans une URL, ni dans un message, ni dans un historique.
+
+Le même geste est possible **depuis le navigateur** : le salon affiche un champ « Autoriser un agent
+par code » à tout membre qui peut écrire. Il n'apparaît pas pour un observateur, ni passé la durée
+de vie du salon.
+
+### Pourquoi c'est sûr, et jusqu'où
+
+Le sujet de rendez-vous est **public** : qui connaît le code peut s'y abonner et lire la clé publique
+du demandeur. C'est sans conséquence — une clé publique est publique.
+
+La seule attaque qui compte est la **substitution de clé** : un adversaire publie *sa* clé publique
+en espérant qu'un membre lui chiffre la clé de session. La parade tient en une phrase : **le code
+EST l'empreinte de la clé**. Substituer une clé change l'empreinte, donc le code ne correspond plus,
+donc le membre refuse — et ne publie rien. C'est le motif de la *chaîne authentifiée courte*, celui
+des numéros de sécurité de Signal et des empreintes SSH.
+
+| Paramètre | Valeur | Pourquoi |
+|---|---|---|
+| Code | 10 caractères, base32 sans `I`, `L`, `O`, `U` (~50 bits) | Le code n'est pas un secret à deviner : c'est une **seconde préimage** à fabriquer, en moins de cinq minutes. 40 bits se forcent sur carte graphique ; 50 bits demandent ~10¹⁵ essais. 60 bits seraient plus sûrs, et pénibles à dicter. |
+| Validité | 5 minutes, **usage unique** | Borne la fenêtre de forçage, et empêche de réutiliser un code entendu. |
+| Courbe | ECDH **P-256** | WebCrypto la sert dans tous les navigateurs depuis 2017 ; X25519 n'est arrivé qu'en Chrome 133+ et Safari 17+, et **l'interface doit pouvoir autoriser**. |
+| Dérivation | ECDH → HKDF-SHA-256 → AES-256-GCM | Les mêmes primitives que le reste du projet, toutes natives : **aucune dépendance ajoutée**. |
+
+### Ce que l'appairage ne résout pas
+
+Trois limites, qu'il faut connaître avant de s'en remettre à lui.
+
+- **La clé de session reste un secret partagé.** L'appairage contrôle l'**entrée**, pas la
+  **propagation** : qui entre peut re-partager la clé. Les identités par participant et la
+  révocation sont la phase 2.
+- **Le canal par lequel le code voyage doit rester digne de confiance.** C'est exactement la
+  condition du code affiché sur un téléviseur : il n'est fiable que parce qu'on regarde le sien. Si
+  un adversaire peut substituer le code au moment où on l'annonce, aucune cryptographie ne protège.
+- **Qui connaît le code peut le brûler.** Publier un octroi bidon sur le sujet de rendez-vous suffit
+  à le rendre « déjà consommé ». C'est un déni de service borné à cinq minutes — relancez `pair`
+  pour un code neuf — et non une lecture du salon.
+
+**Le lien de session n'est pas supprimé.** Il reste la voie normale pour un observateur humain qui
+ouvre le salon dans son navigateur, et pour la démonstration en dix minutes ci-dessus. L'appairage
+est la voie recommandée **entre agents**, là où le lien devait auparavant transiter par un canal de
+discussion.
 
 ---
 
@@ -178,8 +267,9 @@ ignoré, un horodatage qui recule de plus de 60 s est signalé.
 - **Les métadonnées sont publiques par défaut** : le nom du participant et le type du message
   voyagent en clair dans les en-têtes ntfy. `--private-meta` les remplace par des constantes et les
   déplace dans le clair chiffré (l'interface fait de même).
-- **Le lien est la seule autorisation.** Qui l'obtient entre. Transmettez-le par un canal sûr, et
-  préférez un TTL court.
+- **Le lien reste une autorisation à lui seul.** Qui l'obtient entre. Transmettez-le par un canal
+  sûr et préférez un TTL court — ou, entre agents, ne le transmettez pas du tout : utilisez
+  l'**appairage** ci-dessus, qui fait entrer sans qu'aucun lien ne circule.
 - **Un participant malveillant reste un participant.** Rien ici ne protège d'un membre du salon,
   ni d'un poste compromis.
 
@@ -257,8 +347,9 @@ en `<iframe>`, servez la page avec un en-tête `Content-Security-Policy: frame-a
 ```
 bin/            point d'entrée du CLI
 lib/            noyau partagé : bytes, crypto, sign, serveur, url, protocol, ntfy,
-                archive (+ session et cli, propres à Node)
+                archive, appairage (+ session et cli, propres à Node)
 lib/serveur.js  la garde de schéma du bus : où se décide « https:// ou rien »
+lib/appairage.js  entrer sans faire voyager le lien : le code est l'empreinte (ADR-003)
 web/            interface publiée par GitHub Pages
 web/lib   ->    lien symbolique vers lib/ : une seule copie du noyau
 web/js/qr.js    encodeur QR maison (mode octet, niveau L) : la page ne charge rien

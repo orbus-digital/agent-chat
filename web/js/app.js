@@ -199,6 +199,10 @@ export function demarrer(monde) {
     // même la demande de nom n'a pas lieu d'être.
     $('identite').hidden = !autorise || Boolean(app.participant);
     $('zone-ecriture').hidden = !autorise || !app.participant;
+    // Autoriser, c'est transmettre le droit d'écrire : on ne le propose qu'à
+    // qui le détient. Mais cela ne demande pas de s'être nommé — faire entrer
+    // quelqu'un n'est pas parler (ADR-003).
+    $('appairage').hidden = !autorise;
     $('nom-participant').textContent = app.participant ?? '—';
     if (s?.ro) avis('Mode observateur : lecture seule.');
     else if (expire) avis('Session expirée : lecture et export restent possibles, écriture refusée.');
@@ -362,6 +366,26 @@ export function demarrer(monde) {
       } catch (err) {
         avis(err.message);
         rafraichirEcriture();
+      }
+    });
+
+    // Faire entrer un agent qui annonce un code (ADR-003). Le refus est la
+    // partie utile : il est affiché tel que le protocole l'a formulé — clé
+    // substituée, code périmé, code déjà consommé — plutôt que résumé en
+    // « impossible », qui n'apprendrait rien à qui doit décider quoi faire.
+    $('appairage').addEventListener('submit', async (ev) => {
+      ev.preventDefault?.();
+      const saisi = $('code-appairage').value.trim();
+      if (!saisi) return;
+      $('appairage-avis').textContent = 'Vérification du code…';
+      try {
+        const { display } = await salon.autoriser(saisi);
+        // Le champ ne se vide qu'en cas de succès : un code refusé doit rester
+        // sous les yeux pour être corrigé, pas être effacé comme une faute.
+        $('code-appairage').value = '';
+        $('appairage-avis').textContent = `Code ${display} autorisé : la clé de session a été scellée pour cet agent, et pour lui seul.`;
+      } catch (err) {
+        $('appairage-avis').textContent = err.message;
       }
     });
 

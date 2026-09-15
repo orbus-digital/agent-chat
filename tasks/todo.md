@@ -261,3 +261,177 @@ Détail dans ADR-002.
 `ntfy.sh`, 29 vérifications vertes, **zéro erreur console** (AC-13). Messages de refus relus à la
 main sur les six cas (distant, local, option sur distant, sans schéma, `NTFY_BASE_URL`, lien forgé) :
 code 2 partout, et chacun propose l'URL à écrire à la place.
+
+---
+
+# Tâche : agent-chat-relay — l'appairage sans serveur d'autorisation (LOT 1)
+
+Décision **ADR-003** (`docs/adr/ADR-003-appairage-sans-serveur-dautorisation.md`, `9f325a8`),
+demandée par l'exploitant du projet · branche `feat/agent-chat-relay-c20260915-0838-lot1` depuis
+`dev` (les lots précédents sont fusionnés : on ne les empile pas).
+
+## Objectif
+
+Aujourd'hui, entrer dans un salon veut dire **recevoir un lien qui porte la clé**. Le fragment ne
+part jamais au serveur — mais le lien, lui, voyage : presse-papiers, historique, ticket, capture
+d'écran. Chaque passage est une copie complète du pouvoir de lire et d'écrire, et aucune n'est
+révocable.
+
+ADR-003 garde l'expérience du *device login* (un code court, dicté) et **supprime l'arbitre** : le
+bus sert de point de rendez-vous, la cryptographie asymétrique remplace le serveur d'autorisation.
+L'ADR est **actée** : ses paramètres ne se rediscutent pas ici, ils s'implémentent.
+
+## Le déroulé, et le point qui le fait tenir
+
+1. Le demandeur génère une paire éphémère **ECDH P-256**.
+2. Le **code EST l'empreinte** de sa clé publique : 10 caractères base32 sans ambiguïtés (~50 bits).
+3. Il publie sa clé publique sur le sujet d'appairage **dérivé du code**, et s'y abonne.
+4. Il dicte le code à un humain — `KXR7-2M4Q-9T`.
+5. Un membre saisit le code, récupère la clé publique, **vérifie que son empreinte est exactement
+   le code saisi**, puis publie la clé de session **scellée pour cette clé**.
+6. Le demandeur ouvre et entre.
+
+Le sujet d'appairage est **public** : quiconque connaît le code y lit la clé publique du demandeur.
+C'est sans conséquence — une clé publique est publique. La seule attaque qui compte est la
+**substitution de clé**, et la parade est que le code est l'empreinte : substituer une clé change
+l'empreinte, donc le code ne correspond plus, donc le membre refuse.
+
+## Les demandes du lot
+
+- [x] **D-19 — Le protocole dans `lib/appairage.js`**, au même niveau que `crypto.js` et `sign.js` :
+      empreinte et code (base32 sans ambiguïtés, 10 caractères), sujet dérivé du code, offre,
+      octroi scellé (ECDH P-256 → HKDF-SHA-256 → AES-256-GCM), et les trois refus. **WebCrypto pur,
+      aucune dépendance ajoutée, aucun `node:*`** : le fichier est aussi chargé par le navigateur à
+      travers `web/lib`.
+- [x] **D-20 — Deux verbes de CLI.** `agentchat pair` (côté demandeur : génère, publie, imprime le
+      code, attend) et `agentchat authorize <url> <code>` (côté membre : récupère, vérifie
+      l'empreinte, scelle, publie).
+- [x] **D-21 — Le côté interface.** Un membre doit pouvoir **autoriser depuis le navigateur** :
+      champ de code dans le salon, visible seulement quand on a le droit d'écrire, et qui dit ce
+      qu'il a fait — ou pourquoi il a refusé.
+- [x] **D-22 — Les tests, dont les trois qui comptent** : la **substitution de clé publique** doit
+      être refusée ; un **code expiré** doit être refusé ; un **code déjà consommé** doit être
+      refusé. Unitaires, acceptation de bout en bout (vrais processus, faux ntfy), et interface.
+- [x] **D-23 — La documentation** : README (dont ce que l'appairage ne résout pas), kit de session
+      de la skill, et réinjection dans la spec (BR-0002 : une décision qui tranche une exigence se
+      réécrit dans la spec, sinon la BA la re-signale).
+
+## Ce qui reste hors périmètre, et doit le rester
+
+- **Le lien de session n'est pas supprimé.** Il demeure la voie normale pour un observateur humain
+  et pour la démonstration en dix minutes du README. L'appairage devient la voie recommandée
+  **entre agents**.
+- **Les identités par participant et la révocation sont la phase 2**, pas ce lot.
+
+## Ce que le lot ne prétend pas résoudre, et le dit dans sa documentation
+
+- **La clé de session reste un secret partagé** : qui entre peut la re-partager. L'appairage
+  contrôle l'**entrée**, pas la **propagation**.
+- **Le canal par lequel le code voyage doit rester digne de confiance**, exactement comme un code
+  affiché sur un téléviseur : si un adversaire peut substituer le code au moment où le demandeur
+  l'annonce, aucune cryptographie ne protège.
+
+## Décisions de conception (ce que l'ADR laisse à l'implémentation)
+
+- **Alphabet du code** : base32 de Crockford — `0123456789ABCDEFGHJKMNPQRSTVWXYZ` — qui retire
+  `I`, `L`, `O` et `U`. 10 caractères = 50 bits, la valeur de l'ADR. La saisie est tolérante
+  (minuscules, tirets, espaces, et `I`/`L`→`1`, `O`→`0`), la production ne l'est pas.
+- **Le sujet est dérivé du code, pas de la clé** : un membre qui n'a que le code doit pouvoir le
+  calculer. Séparation de domaine par un préfixe de contexte, pour qu'aucune empreinte ne serve
+  deux fois à deux usages.
+- **L'octroi est lié à la transcription** : la clé de scellement dérive du secret ECDH *et* des
+  deux clés publiques *et* du code. Une offre rejouée sous une autre clé ne produit pas la même
+  clé, donc ne s'ouvre pas.
+- **« Déjà consommé » se mesure sur le bus, pas dans un fichier local** : un octroi déjà publié
+  pour cette empreinte suffit à refuser. Aucun état à conserver, et le refus vaut pour tout membre,
+  pas seulement pour celui qui a autorisé.
+
+## Risques
+
+- **Le noyau est isomorphe** : y réintroduire `Buffer` ou un import `node:*` casserait l'interface
+  sans casser le CLI (test `isomorphisme.test.js`).
+- **Le corps publié doit rester du base64url** (`lib/ntfy.js`, R1). L'offre est **volontairement
+  publique** (une clé publique l'est) ; l'octroi, lui, est scellé. Les deux sont encodés en
+  base64url, et le module le dit là où on pourrait le lire de travers.
+- **`npm run recette` est faillible pour une raison d'outillage** (Playwright non épinglé + CSP
+  stricte : `waitForFunction` exige `unsafe-eval`). Attendre depuis Node (`page.evaluate`), jamais
+  dans la page. Ne **jamais** relâcher la CSP pour faire passer un test.
+
+## Retour arrière
+
+`git revert` du commit de lot. Aucune migration, aucun format de session modifié : `pair` écrit un
+fichier de session de la même forme que `join`.
+
+## Vérification
+
+```bash
+npm test                       # unitaires + acceptation + portail de couverture (seuil AC-12)
+npm run web &                  # interface servie localement
+npm run recette                # scénario navigateur, 0 erreur console attendue
+```
+
+## Notes de revue — appairage (5 demandes sur 5)
+
+**472 tests verts** (383 avant ce lot), `lib/appairage.js` à **99,1 %** de couverture, recette
+navigateur **41 vérifications vertes et zéro erreur console** sur Chromium réel contre l'interface
+servie et le vrai bus — y compris l'appairage complet, de bout en bout, depuis le navigateur.
+
+### Ce que ce lot change, en une phrase
+
+Un agent peut désormais entrer dans un salon **sans qu'aucun lien ne lui soit envoyé** : il annonce
+un code de dix caractères, un membre le saisit, et la clé de session lui arrive scellée pour sa
+seule clé publique. Le lien reste ce qu'il était pour un observateur humain.
+
+### Les trois refus, et pourquoi ce sont eux qui font le mécanisme
+
+Sans eux, l'appairage ne serait qu'une remise de clé à qui la demande. Chacun a son test dédié, à
+trois niveaux — unitaire, CLI de bout en bout avec de vrais processus, et interface.
+
+- **Substitution.** Un adversaire qui publie *sa* clé publique, parfaitement bien formée, sur le
+  sujet de rendez-vous, est refusé : son empreinte n'est pas le code annoncé. Et quand les deux
+  clés cohabitent, c'est la légitime — et elle seule — qui est servie ; l'octroi ne s'ouvre pas
+  sous la clé de l'adversaire. Aucun octroi n'est publié lors d'un refus : c'est la propriété qui
+  compte, plus encore que le code de retour.
+- **Expiration.** Cinq minutes, et la borne est celle du **protocole**, pas celle que l'offre
+  s'accorde : une offre qui réclame un mois n'obtient que cinq minutes. Le demandeur qui n'a pas
+  été autorisé sort en code 3 **sans écrire de session**.
+- **Usage unique.** « Déjà consommé » se mesure **sur le bus** — un octroi publié pour cette
+  empreinte —, jamais dans un fichier local. Le refus vaut donc pour un second membre qui ne
+  partage aucun état avec le premier : le test le vérifie avec deux `$HOME` distincts.
+
+### Ce qui a été refusé en cours de route
+
+- **Pas de sixième code de retour.** Les cinq de la spec couvrent exactement les cas : un code mal
+  saisi est un usage (2), un code périmé ou consommé est un droit qui n'est plus là (3), une clé
+  qui ne répond pas du code est un défaut d'intégrité (5). Ajouter un code aurait élargi un
+  contrat stable pour rien.
+- **Pas de seconde implémentation du chiffrement.** `crypto.js` dit « rien d'autre ne doit chiffrer
+  dans ce dépôt » : le scellement passe donc par `seal`/`open`, et HKDF a été factorisée en
+  `hkdf256` plutôt que recopiée. `deriveWriteKey` en est désormais le cas particulier.
+- **Pas de durée de vie inventée.** L'invitation ne porte `ttlH` que si le salon l'a **annoncée** ;
+  sinon elle l'omet, et l'arrivant la suppose pour lui seul. C'est exactement D-09, appliqué à une
+  voie d'entrée qui n'existait pas alors.
+- **Pas de CSP relâchée pour faire passer le scénario.** Les quatre `page.waitForFunction` du
+  harnais, dont le *polling* exige `unsafe-eval`, sont remplacés par une attente **côté Node**
+  (`page.evaluate`, qui passe par CDP). Le produit n'a pas bougé ; c'était le harnais qui n'était
+  plus compatible avec la CSP qu'il mesure. Cela clôt le correctif de harnais laissé en suspens.
+
+### Ce que le lot ne prétend pas résoudre, et qui est écrit noir sur blanc
+
+README, kit de session et spec (R10) le disent dans les mêmes termes : la clé de session reste un
+**secret partagé** — l'appairage contrôle l'**entrée**, pas la **propagation** ; le canal par lequel
+le code voyage doit rester **digne de confiance**, comme un code affiché sur un téléviseur ; et qui
+connaît le code peut le **brûler** — déni de service borné à cinq minutes, pas une lecture du salon.
+
+### Réinjection dans la spec (BR-0002)
+
+ADR-003 tranchait une exigence que la spec ne portait pas. Elle est donc réécrite en **V1.2** :
+§2.2 (les deux verbes), §2.3 (le champ d'appairage), §2.4 (le sujet de rendez-vous et les deux
+messages), **R9** (les paramètres), **R10** (ce que cela ne résout pas), **AC-17 à AC-22**. Sans
+cela, la conformité fonctionnelle aurait été mesurée contre un texte qui ignore la moitié du lot.
+
+### Dépôt public
+
+Balayage des **2 383 lignes ajoutées** : 0 secret, 0 courriel, 0 adresse privée, 0 nom d'hôte
+interne, 0 nom de projet interne, 0 chemin local, 0 sujet en dur. Les 14 occurrences du mot
+« secret » sont de la prose (« la clé de session reste un secret partagé »).
